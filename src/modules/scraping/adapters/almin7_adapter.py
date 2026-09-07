@@ -50,6 +50,9 @@ class Almin7Adapter(BaseAdapter):
             r"(?i)^دراسة\s+(الرياضيات|الطب|الهندسة|الكيمياء|الفيزياء|التسويق|البرمجة|الحاسوب|القانون|الصيدلة)\b"
         ),
     ]
+    GENERIC_STUDY_GUIDE_PATTERN = re.compile(
+    r"(?i)^\s*دراسة\s+.+?\s+في\s+.+$"
+)
 
     EXCLUDED_CATEGORY_PATTERNS = [
         re.compile(
@@ -951,6 +954,8 @@ class Almin7Adapter(BaseAdapter):
 
         # 2. فحص العنوان وأنماط الاستبعاد كـ Fallback
         title = str(parsed.get("title", "")).strip()
+        if self.GENERIC_STUDY_GUIDE_PATTERN.search(title):
+                return False
         for pattern in self.EXCLUDED_PATTERNS:
             if pattern.search(title):
                 return False
@@ -963,7 +968,6 @@ class Almin7Adapter(BaseAdapter):
             return bool(POSITIVE_OPPORTUNITY_PATTERN.search(title))
 
         return True
-
     def _determine_opportunity_type(
         self, title: str, categories: list[str], content: str
     ) -> str:

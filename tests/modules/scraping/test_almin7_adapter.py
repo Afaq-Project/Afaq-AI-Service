@@ -222,3 +222,30 @@ def test_almin7_adapter_reject_articles_and_specializations():
         "link": "https://almin7.com/study-abroad/czech/",
     }
     assert adapter.is_opportunity(guide_item) is False
+
+        # 4. Reject generic "study X in Y" articles
+    study_guide_items = [
+        {
+            "title": "دراسة هندسة الحاسوب في قطر",
+            "link": "https://almin7.com/study-computer-engineering-qatar/",
+            "categories": ["قطر"],
+        },
+        {
+            "title": "دراسة الرياضيات في عُمان",
+            "link": "https://almin7.com/study-mathematics-oman/",
+            "categories": ["عُمان"],
+        },
+        {
+            "title": "دراسة هندسة الحاسوب في بروناي دار السلام",
+            "link": "https://almin7.com/study-computer-engineering-brunei/",
+            "categories": ["بروناي دار السلام"],
+        },
+        {
+            "title": "دراسة الفيزياء في هنغاريا",
+            "link": "https://almin7.com/study-physics-hungary/",
+            "categories": ["هنغاريا"],
+        },
+    ]
+
+    for item in study_guide_items:
+        assert adapter.is_opportunity(item) is False
