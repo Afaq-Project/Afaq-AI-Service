@@ -1,6 +1,7 @@
 import logging
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 from ..utils.date_parser import extract_deadline_from_text, parse_date
 from ..utils.text_cleaner import clean_html, clean_text, extract_urls
@@ -21,6 +22,15 @@ APPLICATION_URL_KEYWORDS = [
     "سجل",
     "استمارة",
 ]
+
+
+def _extract_domain(url: str) -> str:
+    """Extracts the netloc (domain) from a URL for comparison."""
+    try:
+        netloc = urlparse(url).netloc.lower()
+        return re.sub(r"^www\.", "", netloc)
+    except Exception:
+        return ""
 
 
 class CleaningService:
@@ -69,7 +79,13 @@ class CleaningService:
     def _extract_application_link(
         self, html_content: str, source_url: str
     ) -> str | None:
-        """يستخرج رابط التقديم الرسمي من وسوم <a> داخل النص مع تجنب الروابط الداخلية والوسائط."""
+        """يستخرج رابط التقديم الرسمي من وسوم <a> داخل النص مع تجنب الروابط الداخلية والوسائط.
+
+        يتم تجاهل الروابط التي تنتمي لنفس النطاق كـ source_url (روابط داخلية للموقع).
+        رابط التقديم الحقيقي يكون في الغالب على نطاق خارجي (جامعة، مؤسسة، بوابة).
+        """
+        source_domain = _extract_domain(source_url)
+
         # Find hrefs with surrounding text
         matches = re.findall(
             r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
@@ -107,6 +123,11 @@ class CleaningService:
             ):
                 continue
 
+            # Skip links from the same domain as source_url (internal site links)
+            href_domain = _extract_domain(href_clean)
+            if source_domain and href_domain and href_domain == source_domain:
+                continue
+
             if any(
                 kw in anchor_lower or kw in href_lower
                 for kw in APPLICATION_URL_KEYWORDS
@@ -121,6 +142,9 @@ class CleaningService:
             if url_clean != source_url and url_clean.rstrip("/") != source_url.rstrip(
                 "/"
             ):
+                # Skip same-domain URLs
+                if source_domain and _extract_domain(url_clean) == source_domain:
+                    continue
                 if not any(
                     url_lower.endswith(ext)
                     for ext in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".css", ".js"]

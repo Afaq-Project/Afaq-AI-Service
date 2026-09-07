@@ -64,6 +64,8 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
 
         deadline = self._extract_deadline(content)
 
+        organization = self._extract_organization(title, content)
+
         return {
             **base_parsed,
             "opportunity_type": opportunity_type,
@@ -72,6 +74,7 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
             "country": country,
             "location": country,
             "deadline": deadline,
+            "organization": organization,
         }
 
     def is_opportunity(self, raw_item: dict[str, Any]) -> bool:
@@ -203,17 +206,17 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
         تصنيفات مثل MBA/Bachelor/PhD تُستخدم لتحديد study_levels، بينما Internship
         وحده من هذه القائمة يمكن أن يحدد opportunity_type. هذا تصميم مقصود:
         opportunity_type و study_levels حقلان منفصلان.
+
+        ملاحظة: تم حذف الاختصارات الثنائية (ba, ma, ms, bs) لأنها تسبب false positives.
         """
         levels: list[str] = []
         combined = f"{title} {' '.join(categories)} {content[:1000]}"
 
-        if re.search(
-            r"(?i)\b(bachelor|undergraduate|undergrad|bsc|b\.sc|ba|b\.a)\b", combined
-        ):
+        if re.search(r"(?i)\b(bachelor|undergraduate|undergrad|bsc|b\.sc)\b", combined):
             levels.append("Bachelor")
 
         if re.search(
-            r"(?i)\b(master|masters|postgraduate|graduate|ms|m\.sc|msc|mba|ma|m\.a)\b",
+            r"(?i)\b(master|masters|postgraduate|graduate|m\.sc|msc|mba)\b",
             combined,
         ):
             levels.append("Master")
@@ -302,9 +305,78 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
         return None
 
     def _extract_deadline(self, content: str) -> str | None:
-        pattern = re.compile(
-            r"(?:deadline|application deadline|last date)[:\s]+([^<\n\.,;]+)",
-            re.IGNORECASE,
-        )
-        match = pattern.search(content)
-        return match.group(1).strip() if match else None
+        """
+        يستخرج الموعد النهائي من النص باستخدام أنماط واسعة تشمل:
+        Deadline, Apply by, Applications close, Closing date, Last date to apply, etc.
+        يعيد النص الخام للتاريخ ليتم تحليله لاحقاً في CleaningService.
+        """
+        patterns = [
+            re.compile(
+                r"(?:application\s+deadline|deadline|last\s+date\s+to\s+apply|last\s+date|due\s+date|applications?\s+close(?:\s+on)?|closing\s+date|closes\s+on|apply\s+by|apply\s+before)[:\s]+([^\n\.,;,<]{5,50})",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"(?:submit(?:ting|s)?(?:\s+your)?\s+application(?:s)?\s+(?:by|before|no\s+later\s+than))[:\s]+([^\n\.,;,<]{5,50})",
+                re.IGNORECASE,
+            ),
+        ]
+        for pattern in patterns:
+            match = pattern.search(content)
+            if match:
+                candidate = match.group(1).strip()
+                # Reject candidates that are clearly not dates (too vague or too long)
+                if len(candidate) <= 50 and any(
+                    c.isdigit() or c.isalpha() for c in candidate
+                ):
+                    return candidate
+        return None
+
+    def _extract_organization(self, title: str, content: str) -> str | None:
+        """
+        يستخرج اسم الجهة المانحة أو المؤسسة المضيفة من العنوان والمحتوى.
+
+        الأولوية:
+        1. Labels صريحة: Offered by, Host Institution, University, Provided by
+        2. أسماء الجامعات في العنوان (University of X, X University)
+        3. أسماء المؤسسات المعروفة في العنوان
+        يعيد None إذا لم يكن موثوقاً بما يكفي.
+        """
+        # 1. Try explicit labels in content (first 2000 chars to avoid unrelated text)
+        label_patterns = [
+            re.compile(
+                r"(?:Host\s+Institution(?:s)?|Offered\s+by|Provided\s+by|Organization|Funded\s+by|Sponsor(?:ed\s+by)?|University(?:\s+of)?|Institution)[:\s]+([A-Z][^\n\.,;<]{3,70})",
+                re.IGNORECASE,
+            ),
+        ]
+        for pattern in label_patterns:
+            match = pattern.search(content[:2000])
+            if match:
+                candidate = match.group(1).strip()
+                # Validate: not too short, not too long, starts with uppercase
+                if 3 <= len(candidate) <= 80 and re.match(
+                    r"[A-Za-z\u0600-\u06FF]", candidate
+                ):
+                    return candidate
+
+        # 2. University/Institute patterns in title
+        univ_patterns = [
+            # "University of Alberta", "MIT", "Harvard University"
+            re.compile(
+                r"\b((?:[A-Z][a-z]+\s+){1,4}University(?:\s+of\s+[A-Z][a-z]+)?)\b"
+            ),
+            re.compile(r"\b(University\s+of\s+(?:[A-Z][a-z]+\s*){1,3})\b"),
+            re.compile(
+                r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+Institute(?:\s+of\s+Technology)?)\b"
+            ),
+            re.compile(
+                r"\b((?:DAAD|UNESCO|WHO|UNICEF|UN|IMF|World\s+Bank|Asian\s+Development\s+Bank|ADB|EU|European\s+Commission))\b"
+            ),
+        ]
+        for pattern in univ_patterns:
+            match = pattern.search(title)
+            if match:
+                candidate = match.group(1).strip()
+                if 3 <= len(candidate) <= 80:
+                    return candidate
+
+        return None

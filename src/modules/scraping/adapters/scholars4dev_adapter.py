@@ -165,17 +165,17 @@ class Scholars4DevAdapter(BaseAdapter):
 
     def _extract_study_levels(self, text: str) -> list[str]:
         levels: list[str] = []
-        if re.search(r"(?i)\b(bachelor|undergraduate|bachelors|bsc|ba)\b", text):
+        if re.search(r"(?i)\b(bachelor|undergraduate|bachelors|bsc)\b", text):
             levels.append("Bachelor")
-        if re.search(r"(?i)\b(master|masters|postgraduate|msc|ma|mba)\b", text):
+        if re.search(r"(?i)\b(master|masters|postgraduate|msc|mba)\b", text):
             levels.append("Master")
-        if re.search(r"(?i)\b(phd|doctorate|doctoral|fellowship)\b", text):
+        if re.search(r"(?i)\b(phd|doctorate|doctoral)\b", text):
             levels.append("PhD")
         if re.search(r"(?i)\b(postdoc|postdoctoral)\b", text):
             levels.append("Postdoc")
         return levels
 
-    def _extract_funding_type(self, text: str) -> str:
+    def _extract_funding_type(self, text: str) -> str | None:
         if re.search(
             r"(?i)\b(fully[ -]?funded|full tuition|comprehensive scholarship|full scholarship)\b",
             text,
@@ -188,7 +188,7 @@ class Scholars4DevAdapter(BaseAdapter):
             return "partially_funded"
         if re.search(r"(?i)\b(unfunded|self[ -]?funded)\b", text):
             return "unfunded"
-        return "fully_funded"
+        return None
 
     def _extract_deadline(self, text: str) -> str | None:
         pattern = re.compile(

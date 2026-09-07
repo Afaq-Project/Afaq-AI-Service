@@ -68,3 +68,25 @@ class TestScholars4DevAdapter:
         assert parsed["country"] == "UK"
         assert parsed["organization"] == "University of Cambridge"
         assert "5 December 2026" in parsed["deadline"]
+
+    def test_funding_type_default_is_none_when_no_keywords(self):
+        adapter = Scholars4DevAdapter()
+        raw_item = {
+            "title": "Generic University Award",
+            "summary": "Some details about award.",
+            "content": "<p>General information text with no funding mention.</p>",
+            "link": "https://www.scholars4dev.com/123/generic-award/",
+        }
+        parsed = adapter.parse(raw_item)
+        assert parsed["funding_type"] is None
+
+    def test_fellowship_does_not_falsely_mark_phd(self):
+        adapter = Scholars4DevAdapter()
+        raw_item = {
+            "title": "Humphrey Fellowship Program",
+            "summary": "Mid-career professional fellowship program.",
+            "content": "<p>Non-degree fellowship program.</p>",
+            "link": "https://www.scholars4dev.com/456/fellowship/",
+        }
+        parsed = adapter.parse(raw_item)
+        assert "PhD" not in parsed["study_levels"]
