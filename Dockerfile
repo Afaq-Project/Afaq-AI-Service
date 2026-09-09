@@ -1,56 +1,72 @@
-# ============================================
-# Stage 1: Builder - تثبيت التبعيات وتوليد Prisma
-# ============================================
+# Stage 1: Builder
 FROM python:3.12-slim as builder
 
-WORKDIR /tmp
-
-# تثبيت Node.js (مطلوب لـ Prisma CLI)
-RUN apt-get update && apt-get install -y curl \
-    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y nodejs \
+# Install build dependencies
+# build-essential is often needed for compiling some Python packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# تثبيت Poetry وأدوات التصدير
-RUN pip install poetry poetry-plugin-export
+# Install poetry
+RUN pip install --no-cache-dir poetry
 
-# نسخ ملفات Poetry
-COPY ./pyproject.toml ./poetry.lock* /tmp/
-
-# تصدير التبعيات إلى requirements.txt (بدون Dev)
-RUN poetry export -f requirements.txt --output requirements.txt --without-hashes
-
-# ============================================
-# Stage 2: Prisma Generator - توليد العميل
-# ============================================
-FROM builder as prisma-generator
+# Configure poetry to create the virtual environment inside the project directory
+ENV POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_IN_PROJECT=1 \
+    POETRY_VIRTUALENVS_CREATE=1 \
+    POETRY_CACHE_DIR=/tmp/poetry_cache
 
 WORKDIR /app
 
-# نسخ مجلد prisma (يحتوي على schema.prisma)
-COPY ./prisma /app/prisma
+# Copy dependency definition files
+COPY pyproject.toml poetry.lock ./
 
-# توليد Prisma Client (سيتم إنشاء الملفات في /app/prisma/client)
-RUN npx prisma generate --schema=/app/prisma/schema.prisma
+# Install dependencies (only main, no dev dependencies)
+RUN poetry install --only main --no-root && rm -rf $POETRY_CACHE_DIR
 
-# ============================================
-# Stage 3: Final - الصورة النهائية (خفيفة)
-# ============================================
+# Copy prisma schema and generate the client
+# Prisma downloads the query engine binary during the generate step
+ENV PRISMA_BINARY_CACHE_DIR=/app/prisma-engines
+COPY prisma/ prisma/
+RUN poetry run prisma generate
+
+# Stage 2: Runtime
 FROM python:3.12-slim
 
+# Set environment variables for Python and the virtual environment
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/app/.venv/bin:$PATH" \
+    MALLOC_ARENA_MAX=2 \
+    WEB_CONCURRENCY=1 \
+    PRISMA_BINARY_CACHE_DIR=/app/prisma-engines
+
+# Install runtime dependencies
+# Prisma requires OpenSSL to run the query engine
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user and group for security
+RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
+
 WORKDIR /app
 
-# نسخ ملف requirements.txt من مرحلة builder
-COPY --from=builder /tmp/requirements.txt /app/requirements.txt
+# Copy the virtual environment and Prisma engines from the builder stage
+COPY --from=builder --chown=appuser:appgroup /app/.venv /app/.venv
+COPY --from=builder --chown=appuser:appgroup /app/prisma-engines /app/prisma-engines
 
-# تثبيت التبعيات
-RUN pip install --no-cache-dir -r /app/requirements.txt
+# Copy the application code and necessary directories
+COPY --chown=appuser:appgroup src/ src/
+COPY --chown=appuser:appgroup scripts/ scripts/
+COPY --chown=appuser:appgroup prisma/ prisma/
 
-# نسخ مجلد prisma مع العميل المولّد من مرحلة prisma-generator
-COPY --from=prisma-generator /app/prisma /app/prisma
+# Switch to the non-root user
+USER appuser
 
-# نسخ كود المصدر
-COPY ./src /app/src
+# Expose the API port
+EXPOSE 8000
 
-# تشغيل التطبيق
+# Start the application using Uvicorn
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
