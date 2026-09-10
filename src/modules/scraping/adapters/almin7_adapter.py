@@ -2,6 +2,7 @@ import logging
 import re
 from typing import Any
 from urllib.parse import urljoin
+
 from bs4 import BeautifulSoup
 
 from src.modules.infrastructure.http.exceptions import HttpClientError
@@ -840,8 +841,6 @@ class Almin7Adapter(BaseAdapter):
 
         eligibility_text = raw_item.get("eligibility_text")
 
-        if isinstance(eligibility_text, str) and eligibility_text.strip():
-            parsed_output["eligibility_text"] = eligibility_text.strip()
 
         nationalities = raw_item.get(
             "eligible_nationalities"
@@ -866,6 +865,9 @@ class Almin7Adapter(BaseAdapter):
             "deadline": deadline_text,
             "raw_payload": raw_item,
         }
+
+        if isinstance(eligibility_text, str) and eligibility_text.strip():
+            parsed_output["eligibility_text"] = eligibility_text.strip()
 
         if application_url:
             parsed_output["application_url"] = application_url
