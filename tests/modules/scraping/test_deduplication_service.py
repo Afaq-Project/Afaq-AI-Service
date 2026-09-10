@@ -79,9 +79,9 @@ def test_deduplication_scenario_b_different_scholarships_same_org_and_app_url():
     hash_a = service.generate_content_hash(opp_a)
     hash_b = service.generate_content_hash(opp_b)
 
-    assert hash_a != hash_b, (
-        "Different scholarships sharing the same application URL must have distinct hashes"
-    )
+    assert (
+        hash_a != hash_b
+    ), "Different scholarships sharing the same application URL must have distinct hashes"
 
 
 @pytest.mark.asyncio

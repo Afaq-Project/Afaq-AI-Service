@@ -76,9 +76,8 @@ class WordPressApiAdapter(BaseAdapter):
                 response = await self.http_client.get(url, params=params)
                 posts = response.json()
             except HttpResponseError as exc:
-                if (
-                    exc.status_code == 400
-                    and "rest_post_invalid_page_number" in exc.message
+                if exc.status_code == 400 and "rest_post_invalid_page_number" in str(
+                    exc
                 ):
                     # Reached end of pagination
                     break

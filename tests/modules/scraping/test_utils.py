@@ -1,4 +1,3 @@
-
 from src.modules.scraping.utils.date_parser import (
     extract_deadline_from_text,
     parse_date,

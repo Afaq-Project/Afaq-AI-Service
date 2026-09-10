@@ -126,7 +126,7 @@ class Scholars4DevAdapter(BaseAdapter):
                     continue
 
                 title = a_tag.get_text(strip=True)
-                url = a_tag["href"]
+                url = str(a_tag["href"])
                 entry_div = post.find("div", class_="entry") or post
                 summary = entry_div.get_text(strip=True) if entry_div else ""
 

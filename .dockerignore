@@ -1,0 +1,41 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+Pipfile
+Pipfile.lock
+
+# Prisma
+# Note: we need the prisma directory, but we don't need sqlite files if any
+*.db
+*.db-journal
+
+# VS Code / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git
+.gitignore
+
+# Poetry
+.poetry/
+
+# Docker
+Dockerfile
+.dockerignore
+debug.Dockerfile
+
+# Tests and Coverage
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/

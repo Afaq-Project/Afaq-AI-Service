@@ -216,7 +216,11 @@ class ScraperService:
                             "Duplicate opportunity detected: '%s'",
                             normalized.get("title"),
                         )
-                        if self._opportunity_repo and raw_id != "mock-raw-id":
+                        if (
+                            self._opportunity_repo
+                            and raw_id
+                            and raw_id != "mock-raw-id"
+                        ):
                             await self._opportunity_repo.mark_raw_status(
                                 raw_id, status="duplicate"
                             )
@@ -226,7 +230,7 @@ class ScraperService:
                     self._deduplication_service.mark_as_seen(content_hash)
 
                     # Store cleaned opportunity
-                    if self._opportunity_repo and raw_id != "mock-raw-id":
+                    if self._opportunity_repo and raw_id and raw_id != "mock-raw-id":
                         try:
                             await self._opportunity_repo.create_cleaned(
                                 {
@@ -285,7 +289,7 @@ class ScraperService:
                     logger.warning(
                         "Error processing raw item '%s': %s", source_url, item_exc
                     )
-                    if self._opportunity_repo and raw_id != "mock-raw-id":
+                    if self._opportunity_repo and raw_id and raw_id != "mock-raw-id":
                         await self._opportunity_repo.mark_raw_status(
                             raw_id, status="failed", error_message=str(item_exc)
                         )

@@ -50,3 +50,12 @@ ignore = ["E501"]
 [tool.ruff.lint.per-file-ignores]
 "src/api/**/*.py" = ["B008"]
 
+[tool.black]
+target-version = ["py312"]
+line-length = 88
+
+[[tool.mypy.overrides]]
+module = ["dateparser", "bs4"]
+ignore_missing_imports = true
+
+

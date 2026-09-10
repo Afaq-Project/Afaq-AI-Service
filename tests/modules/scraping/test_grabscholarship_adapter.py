@@ -22,9 +22,9 @@ def test_grabscholarship_classification_regression_international_scholarship():
         "link": "https://grabscholarships.com/university-of-alberta-international-undergraduate-scholarships/",
     }
     parsed1 = adapter.parse(item1)
-    assert parsed1["opportunity_type"] == "scholarship", (
-        "International Undergraduate Scholarships must be 'scholarship' not 'internship'"
-    )
+    assert (
+        parsed1["opportunity_type"] == "scholarship"
+    ), "International Undergraduate Scholarships must be 'scholarship' not 'internship'"
     assert "Bachelor" in parsed1["study_levels"]
     assert parsed1["country"] == "Canada"
 
