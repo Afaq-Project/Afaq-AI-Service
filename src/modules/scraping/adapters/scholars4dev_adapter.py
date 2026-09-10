@@ -199,6 +199,8 @@ class Scholars4DevAdapter(BaseAdapter):
                 sibling = sibling.find_next_sibling()
 
         return None
+
+
     def _extract_fields_of_study(self, html: str) -> list[str]:
         """Extract fields of study from explicit Scholars4Dev labels."""
         section = self._extract_labeled_section(
@@ -355,6 +357,8 @@ class Scholars4DevAdapter(BaseAdapter):
 
         if not opportunities:
             return [raw_item]
+
+
         return opportunities
 
 
