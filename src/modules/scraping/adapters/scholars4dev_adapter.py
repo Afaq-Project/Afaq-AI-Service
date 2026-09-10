@@ -152,6 +152,7 @@ class Scholars4DevAdapter(BaseAdapter):
             self.source_name,
         )
         return all_items
+
     def _extract_labeled_section(
         self,
         html: str,
@@ -200,7 +201,6 @@ class Scholars4DevAdapter(BaseAdapter):
 
         return None
 
-
     def _extract_fields_of_study(self, html: str) -> list[str]:
         """Extract fields of study from explicit Scholars4Dev labels."""
         section = self._extract_labeled_section(
@@ -232,6 +232,7 @@ class Scholars4DevAdapter(BaseAdapter):
             return []
 
         return [normalized]
+
     def _is_roundup_post(self, raw_item: dict[str, Any]) -> bool:
         """يحدد هل المنشور عبارة عن قائمة/تجميعة فرص متعددة."""
 
@@ -254,9 +255,9 @@ class Scholars4DevAdapter(BaseAdapter):
         )
 
         return any(
-            re.search(pattern, title, re.IGNORECASE)
-            for pattern in roundup_patterns
+            re.search(pattern, title, re.IGNORECASE) for pattern in roundup_patterns
         )
+
     def _split_roundup_post(
         self,
         raw_item: dict[str, Any],
@@ -346,10 +347,9 @@ class Scholars4DevAdapter(BaseAdapter):
             }
 
             # Keep the original roundup URL for traceability.
-            opportunity_payload["roundup_source_url"] = (
-                raw_item.get("link")
-                or raw_item.get("source_url")
-            )
+            opportunity_payload["roundup_source_url"] = raw_item.get(
+                "link"
+            ) or raw_item.get("source_url")
 
             opportunity_payload["is_split_from_roundup"] = True
 
@@ -358,9 +358,7 @@ class Scholars4DevAdapter(BaseAdapter):
         if not opportunities:
             return [raw_item]
 
-
         return opportunities
-
 
     def parse(self, raw_item: dict[str, Any]) -> dict[str, Any]:
         """يحلل بيانات منحة scholars4dev ويستخرج المستوى والتمويل والموعد النهائي."""
@@ -482,22 +480,25 @@ class Scholars4DevAdapter(BaseAdapter):
             levels.append("Postdoc")
 
         return levels
+
     def _extract_funding_type(self, html: str) -> str | None:
         """Extract funding type from explicit scholarship funding text."""
 
-        text = BeautifulSoup(html, "html.parser").get_text(
-            " ", strip=True
-        )
+        text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
 
-        if re.search(
-            r"(?i)\btuition\b",
-            text,
-        ) and re.search(
-            r"(?i)\b(airfare|travel)\b",
-            text,
-        ) and re.search(
-            r"(?i)\b(living stipend|stipend|living allowance|grant for living costs)\b",
-            text,
+        if (
+            re.search(
+                r"(?i)\btuition\b",
+                text,
+            )
+            and re.search(
+                r"(?i)\b(airfare|travel)\b",
+                text,
+            )
+            and re.search(
+                r"(?i)\b(living stipend|stipend|living allowance|grant for living costs)\b",
+                text,
+            )
         ):
             return "fully_funded"
 
@@ -512,13 +513,13 @@ class Scholars4DevAdapter(BaseAdapter):
         ):
             return "fully_funded"
         if re.search(
-                r"(?i)\bfull payment of your academic fees\b",
-                text,
-            ) and re.search(
-                r"(?i)\bmaintenance stipend\b",
-                text,
-            ):
-                return "fully_funded"
+            r"(?i)\bfull payment of your academic fees\b",
+            text,
+        ) and re.search(
+            r"(?i)\bmaintenance stipend\b",
+            text,
+        ):
+            return "fully_funded"
         if re.search(
             r"(?i)\b(partially[ -]?funded|partial funding|tuition fee waiver)\b",
             text,

@@ -12,8 +12,6 @@ from .base_adapter import BaseAdapter
 logger = logging.getLogger(__name__)
 
 
-
-
 def get_nested_field(data: dict[str, Any], path: str | None) -> Any:
     """يستخرج قيمة حقل متداخل (nested field) بأمان باستخدام مسار نقطي (dot notation)."""
     if not path or not isinstance(data, dict):
@@ -44,16 +42,12 @@ class Almin7Adapter(BaseAdapter):
         re.compile(
             r"(?i)\b(study tips|career advice|نصائح للدراسة|كيف تختار تخصصك|معلومات عامة|أخبار عامة)\b"
         ),
-        re.compile(
-            r"(?i)^(ترتيب الجامعات|الدراسة في|دليل الجامعات|تصنيف الجامعات)"
-        ),
+        re.compile(r"(?i)^(ترتيب الجامعات|الدراسة في|دليل الجامعات|تصنيف الجامعات)"),
         re.compile(
             r"(?i)^دراسة\s+(الرياضيات|الطب|الهندسة|الكيمياء|الفيزياء|التسويق|البرمجة|الحاسوب|القانون|الصيدلة)\b"
         ),
     ]
-    GENERIC_STUDY_GUIDE_PATTERN = re.compile(
-    r"(?i)^\s*دراسة\s+.+?\s+في\s+.+$"
-)
+    GENERIC_STUDY_GUIDE_PATTERN = re.compile(r"(?i)^\s*دراسة\s+.+?\s+في\s+.+$")
 
     EXCLUDED_CATEGORY_PATTERNS = [
         re.compile(
@@ -123,9 +117,9 @@ class Almin7Adapter(BaseAdapter):
 
             for card in cards:
                 # Extract Title & Link
-                title_elem = card.find("h2", class_="al7-archive-posttitle") or card.find(
-                    ["h2", "h3", "h1"]
-                )
+                title_elem = card.find(
+                    "h2", class_="al7-archive-posttitle"
+                ) or card.find(["h2", "h3", "h1"])
                 a_tag = title_elem.find("a") if title_elem else card.find("a")
                 if not a_tag or not a_tag.get("href"):
                     continue
@@ -202,6 +196,7 @@ class Almin7Adapter(BaseAdapter):
             self.source_name,
         )
         return all_items[:limit]
+
     async def fetch_detail(self, url: str) -> dict[str, Any] | None:
         """Fetch and parse a single Almin7 opportunity detail page."""
         if not url:
@@ -253,9 +248,7 @@ class Almin7Adapter(BaseAdapter):
         be fetched.
         """
         source_url = str(
-            raw_item.get("source_url")
-            or raw_item.get("link")
-            or ""
+            raw_item.get("source_url") or raw_item.get("link") or ""
         ).strip()
 
         if not source_url:
@@ -301,7 +294,6 @@ class Almin7Adapter(BaseAdapter):
         if detail.get("deadline"):
             enriched["deadline"] = detail["deadline"]
 
-
         if detail.get("eligibility_text"):
             enriched["eligibility_text"] = detail["eligibility_text"]
 
@@ -337,46 +329,33 @@ class Almin7Adapter(BaseAdapter):
             return {}
 
         title_node = soup.select_one("h1.al7-single-title")
-        title = (
-            title_node.get_text(" ", strip=True)
-            if title_node
-            else ""
-        )
+        title = title_node.get_text(" ", strip=True) if title_node else ""
 
         content_html = str(content_node)
         content_text = content_node.get_text(" ", strip=True)
 
-        application_node = soup.select_one(
-            "a.al7-single-apply-beam[href]"
-        )
+        application_node = soup.select_one("a.al7-single-apply-beam[href]")
         application_url = (
-            str(application_node["href"]).strip()
-            if application_node
-            else None
+            str(application_node["href"]).strip() if application_node else None
         )
 
         taxonomies = self._extract_detail_taxonomies(soup)
 
-        fields_of_study = self._extract_fields_from_detail(
-            content_node
-        )
+        fields_of_study = self._extract_fields_from_detail(content_node)
 
-        study_levels = self._extract_study_levels_from_detail(
-            content_node
-        )
+        study_levels = self._extract_study_levels_from_detail(content_node)
 
-        funding_type, funding_details = (
-            self._extract_funding_from_detail(content_node)
-        )
+        funding_type, funding_details = self._extract_funding_from_detail(content_node)
 
-        deadline = self._extract_deadline_from_detail(
-            content_node
-        )
+        deadline = self._extract_deadline_from_detail(content_node)
 
         tax_org = taxonomies.get("organization")
         if not tax_org and title:
             clean_t = re.sub(r"^(?:منحة|برنامج|فرصة)\s+", "", title).strip()
-            m = re.search(r"^(?:جامعة|الجامعة|معهد|المعهد|كلية|الكلية|أكاديمية|الأكاديمية)\s+[^،,–—\n]+", clean_t)
+            m = re.search(
+                r"^(?:جامعة|الجامعة|معهد|المعهد|كلية|الكلية|أكاديمية|الأكاديمية)\s+[^،,–—\n]+",
+                clean_t,
+            )
             if m:
                 tax_org = m.group(0).strip()
             elif clean_t:
@@ -406,17 +385,10 @@ class Almin7Adapter(BaseAdapter):
         organization: str | None = None
         nationalities: list[str] = []
 
-        nodes = soup.select(
-            "span.al7-single-tax-pill, "
-            "a.al7-single-tax-pill"
-        )
+        nodes = soup.select("span.al7-single-tax-pill, " "a.al7-single-tax-pill")
 
         for node in nodes:
-            anchor = (
-                node.find("a", href=True)
-                if node.name != "a"
-                else node
-            )
+            anchor = node.find("a", href=True) if node.name != "a" else node
 
             text = node.get_text(" ", strip=True)
 
@@ -425,10 +397,7 @@ class Almin7Adapter(BaseAdapter):
             else:
                 href = ""
 
-            classes = " ".join(
-                str(c)
-                for c in node.get("class", [])
-            ).lower()
+            classes = " ".join(str(c) for c in node.get("class", [])).lower()
 
             marker = f"{href} {classes}"
 
@@ -436,24 +405,16 @@ class Almin7Adapter(BaseAdapter):
                 if text and text not in nationalities:
                     nationalities.append(text)
 
-            elif (
-                "location" in marker
-                or "/country/" in marker
-            ):
+            elif "location" in marker or "/country/" in marker:
                 if text and not country:
                     country = text
 
-            elif (
-                "university" in marker
-                or "/universities/" in marker
-            ):
+            elif "university" in marker or "/universities/" in marker:
                 if text and not organization:
                     organization = text
 
-        return {
-            "country": country,
-            "organization": organization
-        }
+        return {"country": country, "organization": organization}
+
     def _extract_eligibility_text(self, content_node: Any) -> str | None:
         """Extract the original eligibility/requirements text from the detail page."""
         section_text = self._get_section_text(
@@ -478,6 +439,7 @@ class Almin7Adapter(BaseAdapter):
             return section_text.strip()
 
         return None
+
     def _find_section_heading(
         self,
         content_node: Any,
@@ -603,8 +565,7 @@ class Almin7Adapter(BaseAdapter):
             levels.append("Master")
 
         if re.search(
-            r"دكتوراه|الدكتوراه|طلاب الدكتوراه|"
-            r"درجة الدكتوراه|phd|doctorate",
+            r"دكتوراه|الدكتوراه|طلاب الدكتوراه|" r"درجة الدكتوراه|phd|doctorate",
             text,
             re.IGNORECASE,
         ):
@@ -620,8 +581,7 @@ class Almin7Adapter(BaseAdapter):
 
         # Diploma only when explicitly connected to an academic program.
         if re.search(
-            r"(?:برنامج|برامج|درجة|طلاب|لطلاب)\s+"
-            r"(?:الدبلوم|دبلوم)",
+            r"(?:برنامج|برامج|درجة|طلاب|لطلاب)\s+" r"(?:الدبلوم|دبلوم)",
             text,
             re.IGNORECASE,
         ):
@@ -649,9 +609,28 @@ class Almin7Adapter(BaseAdapter):
         if not section_text:
             # Fallback to general content text if no dedicated heading
             full_text = content_node.get_text(" ", strip=True).lower()
-            if any(k in full_text for k in ["إعفاء كامل", "تغطية كاملة", "ممول بالكامل", "تمويل كامل", "fully funded"]):
+            if any(
+                k in full_text
+                for k in [
+                    "إعفاء كامل",
+                    "تغطية كاملة",
+                    "ممول بالكامل",
+                    "تمويل كامل",
+                    "fully funded",
+                ]
+            ):
                 return "fully_funded", None
-            if any(k in full_text for k in ["تغطية جزئية", "إعفاء جزئي", "خصم", "خصومات", "ممول جزئيا", "partially funded"]):
+            if any(
+                k in full_text
+                for k in [
+                    "تغطية جزئية",
+                    "إعفاء جزئي",
+                    "خصم",
+                    "خصومات",
+                    "ممول جزئيا",
+                    "partially funded",
+                ]
+            ):
                 return "partially_funded", None
             return None, None
 
@@ -726,67 +705,47 @@ class Almin7Adapter(BaseAdapter):
                         category_names.append(term["name"])
 
         return category_names
+
     def parse(self, raw_item: dict[str, Any]) -> dict[str, Any]:
         """Parse and normalize an Almin7 opportunity."""
         raw_title = raw_item.get("title")
 
         if isinstance(raw_title, dict):
-            title = str(
-                raw_title.get("rendered", "")
-            ).strip()
+            title = str(raw_title.get("rendered", "")).strip()
         else:
             title = str(raw_title or "").strip()
 
         raw_content = raw_item.get("content")
 
         if isinstance(raw_content, dict):
-            content = str(
-                raw_content.get("rendered", "")
-            ).strip()
+            content = str(raw_content.get("rendered", "")).strip()
         else:
             content = str(raw_content or "").strip()
 
         raw_excerpt = raw_item.get("excerpt")
 
         if isinstance(raw_excerpt, dict):
-            excerpt = str(
-                raw_excerpt.get("rendered", "")
-            ).strip()
+            excerpt = str(raw_excerpt.get("rendered", "")).strip()
         else:
             excerpt = str(raw_excerpt or "").strip()
 
         # Prefer full detail content when available.
-        detail_html = str(
-            raw_item.get("detail_html") or ""
-        ).strip()
+        detail_html = str(raw_item.get("detail_html") or "").strip()
 
-        detail_text = str(
-            raw_item.get("detail_text") or ""
-        ).strip()
+        detail_text = str(raw_item.get("detail_text") or "").strip()
 
         if detail_html:
             content = detail_html
 
-        description = (
-            detail_text
-            or excerpt
-            or content
-        )
+        description = detail_text or excerpt or content
 
         source_url = str(
-            raw_item.get("source_url")
-            or raw_item.get("link")
-            or ""
+            raw_item.get("source_url") or raw_item.get("link") or ""
         ).strip()
 
-        application_url = str(
-            raw_item.get("application_url") or ""
-        ).strip() or None
+        application_url = str(raw_item.get("application_url") or "").strip() or None
 
-        published_at = (
-            raw_item.get("published_at")
-            or raw_item.get("date")
-        )
+        published_at = raw_item.get("published_at") or raw_item.get("date")
 
         categories = self._resolve_categories(raw_item)
 
@@ -823,9 +782,7 @@ class Almin7Adapter(BaseAdapter):
         deadline_text = raw_item.get("deadline")
 
         if not deadline_text:
-            deadline_text = self._extract_deadline_text(
-                content
-            )
+            deadline_text = self._extract_deadline_text(content)
 
         fields_of_study = raw_item.get("fields_of_study")
 
@@ -841,10 +798,7 @@ class Almin7Adapter(BaseAdapter):
 
         eligibility_text = raw_item.get("eligibility_text")
 
-
-        nationalities = raw_item.get(
-            "eligible_nationalities"
-        )
+        nationalities = raw_item.get("eligible_nationalities")
 
         if isinstance(nationalities, list) and nationalities:
             eligibility["eligible_nationalities"] = nationalities
@@ -875,7 +829,10 @@ class Almin7Adapter(BaseAdapter):
         organization = raw_item.get("organization")
         if not organization and title:
             clean_t = re.sub(r"^(?:منحة|برنامج|فرصة)\s+", "", title).strip()
-            m = re.search(r"^(?:جامعة|الجامعة|معهد|المعهد|كلية|الكلية|أكاديمية|الأكاديمية)\s+[^،,–—\n]+", clean_t)
+            m = re.search(
+                r"^(?:جامعة|الجامعة|معهد|المعهد|كلية|الكلية|أكاديمية|الأكاديمية)\s+[^،,–—\n]+",
+                clean_t,
+            )
             if m:
                 organization = m.group(0).strip()
             elif clean_t:
@@ -888,11 +845,10 @@ class Almin7Adapter(BaseAdapter):
             parsed_output["eligibility"] = eligibility
 
         if raw_item.get("funding_details"):
-            parsed_output["funding_details"] = raw_item[
-                "funding_details"
-            ]
+            parsed_output["funding_details"] = raw_item["funding_details"]
 
         return parsed_output
+
     def is_opportunity(self, raw_item: dict[str, Any]) -> bool:
         """
         يحدد هل المقال يمثل فرصة حقيقية أم مقالاً عاماً / تخصصاً بالاعتماد على:
@@ -957,7 +913,7 @@ class Almin7Adapter(BaseAdapter):
         # 2. فحص العنوان وأنماط الاستبعاد كـ Fallback
         title = str(parsed.get("title", "")).strip()
         if self.GENERIC_STUDY_GUIDE_PATTERN.search(title):
-                return False
+            return False
         for pattern in self.EXCLUDED_PATTERNS:
             if pattern.search(title):
                 return False
@@ -970,6 +926,7 @@ class Almin7Adapter(BaseAdapter):
             return bool(POSITIVE_OPPORTUNITY_PATTERN.search(title))
 
         return True
+
     def _determine_opportunity_type(
         self, title: str, categories: list[str], content: str
     ) -> str:
@@ -1094,54 +1051,56 @@ class Almin7Adapter(BaseAdapter):
         return self._classify_funding_text(text)
 
     def _extract_funding_from_detail(
-            self,
-            content_node: Any,
-        ) -> tuple[str | None, str | None]:
+        self,
+        content_node: Any,
+    ) -> tuple[str | None, str | None]:
 
-            section_text = self._get_section_text(
-                content_node,
-                (
-                    "أبرز مزايا",
-                    "مزايا منحة",
-                    "مزايا المنحة",
-                    "ماذا تشمل المنحة",
-                    "ما الذي تقدمه المنحة",
-                    "ما الذي تقدمه",
-                    "التمويل",
-                    "تغطية",
-                    "المزايا",
-                    "what does the scholarship provide",
-                    "funding",
-                    "benefits",
-                ),
+        section_text = self._get_section_text(
+            content_node,
+            (
+                "أبرز مزايا",
+                "مزايا منحة",
+                "مزايا المنحة",
+                "ماذا تشمل المنحة",
+                "ما الذي تقدمه المنحة",
+                "ما الذي تقدمه",
+                "التمويل",
+                "تغطية",
+                "المزايا",
+                "what does the scholarship provide",
+                "funding",
+                "benefits",
+            ),
+        )
+
+        if not section_text:
+            full_text = content_node.get_text(" ", strip=True)
+
+            funding_keywords = (
+                "تغطية كاملة",
+                "تغطية جزئية",
+                "تمويل كامل",
+                "تمويل جزئي",
+                "إعفاء كامل",
+                "إعفاء جزئي",
+                "الرسوم الدراسية",
+                "خصومات",
+                "100%",
+                "50%",
+                "25%",
             )
 
-            if not section_text:
-                full_text = content_node.get_text(" ", strip=True)
+            if any(
+                keyword.lower() in full_text.lower() for keyword in funding_keywords
+            ):
+                section_text = full_text
 
-                funding_keywords = (
-                    "تغطية كاملة",
-                    "تغطية جزئية",
-                    "تمويل كامل",
-                    "تمويل جزئي",
-                    "إعفاء كامل",
-                    "إعفاء جزئي",
-                    "الرسوم الدراسية",
-                    "خصومات",
-                    "100%",
-                    "50%",
-                    "25%",
-                )
+        if not section_text:
+            return None, None
 
-                if any(keyword.lower() in full_text.lower() for keyword in funding_keywords):
-                    section_text = full_text
+        funding_type = self._classify_funding_text(section_text)
 
-            if not section_text:
-                return None, None
-
-            funding_type = self._classify_funding_text(section_text)
-
-            return funding_type, section_text.strip()
+        return funding_type, section_text.strip()
 
     def _extract_deadline_text(self, content: str) -> str | None:
         patterns = [
@@ -1184,8 +1143,7 @@ class Almin7Adapter(BaseAdapter):
         )
 
         has_full_tuition = any(
-            re.search(pattern, normalized)
-            for pattern in full_tuition_patterns
+            re.search(pattern, normalized) for pattern in full_tuition_patterns
         )
 
         # Explicit partial tuition coverage.
@@ -1198,8 +1156,7 @@ class Almin7Adapter(BaseAdapter):
         )
 
         has_partial = any(
-            re.search(pattern, normalized)
-            for pattern in partial_patterns
+            re.search(pattern, normalized) for pattern in partial_patterns
         )
 
         # Discounts alone do NOT override full tuition exemption.

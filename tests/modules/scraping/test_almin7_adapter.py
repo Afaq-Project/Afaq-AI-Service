@@ -131,7 +131,9 @@ async def test_almin7_adapter_fetch_html_listings():
         </article>
         """)
 
-    html_content = f"<html><body><div class='posts'>{''.join(sample_cards)}</div></body></html>"
+    html_content = (
+        f"<html><body><div class='posts'>{''.join(sample_cards)}</div></body></html>"
+    )
 
     mock_response = MagicMock()
     mock_response.text = html_content
@@ -182,8 +184,14 @@ def test_almin7_adapter_parse_scraped_card():
 
     parsed = adapter.parse(scraped_item)
     assert parsed["title"] == "منحة الجامعة الرومانية الأمريكية"
-    assert parsed["source_url"] == "https://almin7.com/scholarship/romanian-american-university/"
-    assert parsed["application_url"] == "https://www.rau.ro/scholarship-regulations/?lang=en"
+    assert (
+        parsed["source_url"]
+        == "https://almin7.com/scholarship/romanian-american-university/"
+    )
+    assert (
+        parsed["application_url"]
+        == "https://www.rau.ro/scholarship-regulations/?lang=en"
+    )
     assert parsed["country"] == "رومانيا"
     assert parsed["opportunity_type"] == "scholarship"
     assert "Bachelor" in parsed["study_levels"]
@@ -200,7 +208,11 @@ def test_almin7_adapter_reject_articles_and_specializations():
     article_by_badge = {
         "title": "ترتيب الجامعات الهنغارية لعام 2026",
         "badge": "مقال",
-        "card_classes": ["al7-archive-card", "type-post", "category-university-rankings"],
+        "card_classes": [
+            "al7-archive-card",
+            "type-post",
+            "category-university-rankings",
+        ],
         "link": "https://almin7.com/university-rankings/hungary/",
     }
     assert adapter.is_opportunity(article_by_badge) is False
@@ -223,7 +235,7 @@ def test_almin7_adapter_reject_articles_and_specializations():
     }
     assert adapter.is_opportunity(guide_item) is False
 
-        # 4. Reject generic "study X in Y" articles
+    # 4. Reject generic "study X in Y" articles
     study_guide_items = [
         {
             "title": "دراسة هندسة الحاسوب في قطر",
