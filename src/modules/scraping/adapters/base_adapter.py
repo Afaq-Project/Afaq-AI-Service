@@ -69,7 +69,9 @@ class BaseAdapter(ABC):
         """يجلب قائمة السجلات الخام من المصدر."""
         pass
 
-    @abstractmethod
-    def parse(self, raw_item: dict[str, Any]) -> dict[str, Any]:
-        """يحول السجل الخام الوارد من المصدر إلى حقول شبه منظمة."""
-        pass
+    async def fetch_with_details(self, limit: int = 20, page: int = 1) -> list[dict[str, Any]]:
+        """Default implementation delegating to fetch.
+
+        Adapters that need detailed fetching can override this method.
+        """
+        return await self.fetch(limit=limit, page=page)

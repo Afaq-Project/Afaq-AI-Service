@@ -590,9 +590,12 @@ class Scholars4DevAdapter(BaseAdapter):
         soup = BeautifulSoup(html, "html.parser")
 
         text = soup.get_text(" ", strip=True)
-
         match = re.search(
-            r"(?i)\bStudy in:\s*([A-Za-z][A-Za-z\s,]+?)(?=\s+(?:Next\s+)?course starts\b|\s+Brief description\b|$)",
+            r"(?i)\bStudy in:\s*("
+            r"USA|United States|UK|United Kingdom|Canada|Germany|Australia|"
+            r"Netherlands|Sweden|Switzerland|Japan|France|New Zealand|"
+            r"Singapore|South Korea|Belgium|Italy"
+            r")\b",
             text,
         )
 
@@ -600,6 +603,7 @@ class Scholars4DevAdapter(BaseAdapter):
             return None
 
         country_text = match.group(1).strip()
+
         if "," in country_text:
             country_text = country_text.split(",")[-1].strip()
 

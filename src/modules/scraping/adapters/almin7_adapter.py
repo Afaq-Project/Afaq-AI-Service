@@ -5,6 +5,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
+from src.modules.infrastructure.http.base_http_client import BaseHttpClient
 from src.modules.infrastructure.http.exceptions import HttpClientError
 
 from .base_adapter import BaseAdapter
@@ -36,6 +37,26 @@ class Almin7Adapter(BaseAdapter):
     source_name: str = "almin7"
     base_url: str = "https://almin7.com"
     api_endpoint: str = "/scholarship/"
+
+    def __init__(
+        self,
+        source_config: dict[str, Any] | None = None,
+        http_client: BaseHttpClient | None = None,
+        source_id: str | None = None,
+        source_name: str | None = None,
+        base_url: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            source_config=source_config,
+            http_client=http_client,
+            source_id=source_id,
+            source_name=source_name,
+            base_url=base_url,
+            **kwargs,
+        )
+        # Force the HTML scraping endpoint, ignoring any stale WordPress config from DB
+        self.api_endpoint = "/scholarship/"
 
     # أنماط استبعاد المقالات والتخصصات غير المرتبطة بالفرص
     EXCLUDED_PATTERNS = [
@@ -69,6 +90,8 @@ class Almin7Adapter(BaseAdapter):
         if not endpoint.startswith("/"):
             endpoint = f"/{endpoint}"
         endpoint = endpoint.rstrip("/")
+        # Track seen source URLs to detect duplicate pages (website-side redirect loops)
+        seen_urls: set[str] = set()
 
         while len(all_items) < limit:
             if current_page > 1:
@@ -102,18 +125,82 @@ class Almin7Adapter(BaseAdapter):
                 )
                 break
 
+            # Safety: if the website redirected /page/N/ back to the homepage,
+            # the actual response URL will no longer contain /page/{current_page}/.
+            # We only do this check for page > 1 (page 1 never has /page/ in URL).
+            if current_page > 1:
+                actual_url = str(response.url).lower()
+                expected_segment = f"/page/{current_page}"
+                if expected_segment not in actual_url:
+                    logger.info(
+                        "Page %d for %s was redirected away from expected URL "
+                        "(actual: %s); stopping pagination.",
+                        current_page,
+                        self.source_name,
+                        actual_url,
+                    )
+                    break
+
             soup = BeautifulSoup(html_text, "html.parser")
-            cards = soup.find_all("article", class_="al7-archive-card")
+            cards = soup.find_all(
+                "article",
+                class_="al7-scholarship-page-card",
+            )
+
+            # Fallback: site may have switched CSS class to al7-archive-card.
+            # Only accept cards that carry type-scholarship in their class list
+            # AND whose primary link points to a /scholarship/ URL path.
+            # This mirrors the same discrimination logic used by is_opportunity()
+            # and prevents picking up articles/specialization/ranking pages.
             if not cards:
-                cards = soup.find_all("article")
+                logger.info(
+                    "al7-scholarship-page-card not found on page %d for %s; "
+                    "trying al7-archive-card with type-scholarship filter.",
+                    current_page,
+                    self.source_name,
+                )
+                candidate_cards = soup.find_all("article", class_="al7-archive-card")
+                filtered: list = []
+                for candidate in candidate_cards:
+                    candidate_classes: list[Any] = candidate.get("class") or []
+                    # Must carry WordPress post-type "type-scholarship"
+                    if "type-scholarship" not in candidate_classes:
+                        continue
+                    # Primary link must point to a /scholarship/ URL
+                    primary_link = candidate.find("a")
+                    href = str(primary_link.get("href", "")) if primary_link else ""
+                    if "/scholarship/" not in href:
+                        continue
+                    filtered.append(candidate)
+                cards = filtered
 
             if not cards:
                 logger.info(
-                    "No cards found on page %d for %s; reached end of listings",
+                    "No scholarship cards found on page %d for %s; reached end of listings",
                     current_page,
                     self.source_name,
                 )
                 break
+
+            # Collect URLs on this page to detect duplicate pages
+            page_urls: list[str] = []
+            for card in cards:
+                title_elem = card.find(
+                    "h2", class_="al7-archive-posttitle"
+                ) or card.find(["h2", "h3", "h1"])
+                a_tag = title_elem.find("a") if title_elem else card.find("a")
+                if a_tag and a_tag.get("href"):
+                    page_urls.append(str(a_tag["href"]).strip())
+
+            # Safety: if every URL on this page was already seen, it's a duplicate page.
+            if page_urls and all(u in seen_urls for u in page_urls):
+                logger.info(
+                    "Page %d for %s contains only duplicate URLs; stopping pagination.",
+                    current_page,
+                    self.source_name,
+                )
+                break
+            seen_urls.update(page_urls)
 
             for card in cards:
                 # Extract Title & Link
@@ -152,7 +239,12 @@ class Almin7Adapter(BaseAdapter):
                         action_url = str(action_tag["href"]).strip()
 
                 # Collect taxonomies and categories
-                card_classes = card.get("class", [])
+                card_classes_raw = card.get("class")
+                card_classes: list[str] = (
+                    [str(cls) for cls in card_classes_raw]
+                    if isinstance(card_classes_raw, list)
+                    else []
+                )
                 categories: list[str] = []
                 if badge:
                     categories.append(badge)
@@ -232,12 +324,14 @@ class Almin7Adapter(BaseAdapter):
                 exc,
             )
         except Exception as exc:
+            import traceback
+
             logger.error(
                 "Unexpected error fetching Almin7 detail page %s: %s",
                 detail_url,
                 exc,
             )
-
+            traceback.print_exc()
         return None
 
     async def enrich_item(self, raw_item: dict[str, Any]) -> dict[str, Any]:
@@ -296,6 +390,9 @@ class Almin7Adapter(BaseAdapter):
 
         if detail.get("eligibility_text"):
             enriched["eligibility_text"] = detail["eligibility_text"]
+
+        if detail.get("eligible_nationalities"):
+            enriched["eligible_nationalities"] = detail["eligible_nationalities"]
 
         return enriched
 
@@ -374,6 +471,7 @@ class Almin7Adapter(BaseAdapter):
             "funding_details": funding_details,
             "deadline": deadline,
             "eligibility_text": eligibility_text,
+            "eligible_nationalities": taxonomies.get("nationalities") or [],
         }
 
     def _extract_detail_taxonomies(
@@ -397,8 +495,12 @@ class Almin7Adapter(BaseAdapter):
             else:
                 href = ""
 
-            classes = " ".join(str(c) for c in node.get("class", [])).lower()
+            node_classes_raw = node.get("class")
+            node_classes: list[Any] = (
+                node_classes_raw if isinstance(node_classes_raw, list) else []
+            )
 
+            classes = " ".join(str(c) for c in node_classes).lower()
             marker = f"{href} {classes}"
 
             if "nationality" in marker:
@@ -413,7 +515,11 @@ class Almin7Adapter(BaseAdapter):
                 if text and not organization:
                     organization = text
 
-        return {"country": country, "organization": organization}
+        return {
+            "country": country,
+            "organization": organization,
+            "nationalities": nationalities,
+        }
 
     def _extract_eligibility_text(self, content_node: Any) -> str | None:
         """Extract the original eligibility/requirements text from the detail page."""
@@ -608,62 +714,15 @@ class Almin7Adapter(BaseAdapter):
 
         if not section_text:
             # Fallback to general content text if no dedicated heading
-            full_text = content_node.get_text(" ", strip=True).lower()
-            if any(
-                k in full_text
-                for k in [
-                    "إعفاء كامل",
-                    "تغطية كاملة",
-                    "ممول بالكامل",
-                    "تمويل كامل",
-                    "fully funded",
-                ]
-            ):
-                return "fully_funded", None
-            if any(
-                k in full_text
-                for k in [
-                    "تغطية جزئية",
-                    "إعفاء جزئي",
-                    "خصم",
-                    "خصومات",
-                    "ممول جزئيا",
-                    "partially funded",
-                ]
-            ):
-                return "partially_funded", None
-            return None, None
+            full_text = content_node.get_text(" ", strip=True)
 
-        normalized = section_text.lower()
+            funding_type = self._classify_funding_text(full_text)
 
-        has_full = bool(
-            re.search(
-                r"تغطية كاملة|تمويل كامل|منحة كاملة|إعفاء كامل|"
-                r"fully funded|full scholarship|100% funded|100% من الرسوم",
-                normalized,
-                re.IGNORECASE,
-            )
-        )
+            return funding_type, None
 
-        has_partial = bool(
-            re.search(
-                r"تغطية جزئية|تمويل جزئي|منحة جزئية|إعفاء جزئي|"
-                r"خصومات|خصم|partially funded|50% من الرسوم|25% من الرسوم",
-                normalized,
-                re.IGNORECASE,
-            )
-        )
+        funding_type = self._classify_funding_text(section_text)
 
-        if has_full and not has_partial:
-            return "fully_funded", section_text
-
-        if has_partial and not has_full:
-            return "partially_funded", section_text
-
-        if has_full and has_partial:
-            return "partially_funded", section_text
-
-        return None, section_text
+        return funding_type, section_text
 
     def _extract_deadline_from_detail(
         self,
@@ -802,6 +861,11 @@ class Almin7Adapter(BaseAdapter):
 
         if isinstance(nationalities, list) and nationalities:
             eligibility["eligible_nationalities"] = nationalities
+
+        # Preserve the full eligibility text so downstream services (cleaning,
+        # normalization, matching) can use it.  Must NOT be inferred from prose.
+        if isinstance(eligibility_text, str) and eligibility_text.strip():
+            eligibility["eligibility_text"] = eligibility_text.strip()
 
         parsed_output: dict[str, Any] = {
             "title": title,
@@ -1050,58 +1114,6 @@ class Almin7Adapter(BaseAdapter):
 
         return self._classify_funding_text(text)
 
-    def _extract_funding_from_detail(
-        self,
-        content_node: Any,
-    ) -> tuple[str | None, str | None]:
-
-        section_text = self._get_section_text(
-            content_node,
-            (
-                "أبرز مزايا",
-                "مزايا منحة",
-                "مزايا المنحة",
-                "ماذا تشمل المنحة",
-                "ما الذي تقدمه المنحة",
-                "ما الذي تقدمه",
-                "التمويل",
-                "تغطية",
-                "المزايا",
-                "what does the scholarship provide",
-                "funding",
-                "benefits",
-            ),
-        )
-
-        if not section_text:
-            full_text = content_node.get_text(" ", strip=True)
-
-            funding_keywords = (
-                "تغطية كاملة",
-                "تغطية جزئية",
-                "تمويل كامل",
-                "تمويل جزئي",
-                "إعفاء كامل",
-                "إعفاء جزئي",
-                "الرسوم الدراسية",
-                "خصومات",
-                "100%",
-                "50%",
-                "25%",
-            )
-
-            if any(
-                keyword.lower() in full_text.lower() for keyword in funding_keywords
-            ):
-                section_text = full_text
-
-        if not section_text:
-            return None, None
-
-        funding_type = self._classify_funding_text(section_text)
-
-        return funding_type, section_text.strip()
-
     def _extract_deadline_text(self, content: str) -> str | None:
         patterns = [
             r"(?:آخر موعد للتقديم|اخر موعد|الموعد النهائي)[:\s]+([^<\n\.,;]+)",
@@ -1118,12 +1130,13 @@ class Almin7Adapter(BaseAdapter):
         normalized = re.sub(r"\s+", " ", text).strip().lower()
 
         # Mixed / tiered funding:
-        # not everyone necessarily receives full funding.
+        # Not everyone necessarily receives full funding.
         mixed_patterns = (
             r"كامل(?:ة)?\s+أو\s+جزئي(?:ة)?",
             r"كامل(?:ة)?\s+وجزئي(?:ة)?",
             r"100%\s*.*(?:50%|25%)",
             r"100%\s*.*خصم",
+            r"\b(?:15|20|25|30|40|50|60|70|75|80|90)%\s*[-–]?\s*(?:إلى\s*)?(?:15|20|25|30|40|50|60|70|75|80|90)%",
         )
 
         if any(re.search(pattern, normalized) for pattern in mixed_patterns):
@@ -1133,6 +1146,7 @@ class Almin7Adapter(BaseAdapter):
         full_tuition_patterns = (
             r"ممول(?:ة)?\s+بالكامل",
             r"إعفاء كامل(?: من)?(?: جميع)? الرسوم",
+            r"إعفاء كامل من الرسوم الدراسية",
             r"تغطية كاملة(?: ل)?(?: جميع)? الرسوم",
             r"تمويل كامل(?: ل)?(?: جميع)? الرسوم",
             r"منحة كاملة(?: ل)?(?: جميع)? الرسوم",
@@ -1159,7 +1173,8 @@ class Almin7Adapter(BaseAdapter):
             re.search(pattern, normalized) for pattern in partial_patterns
         )
 
-        # Discounts alone do NOT override full tuition exemption.
+        # Full tuition coverage wins over unrelated discounts
+        # such as books, accommodation, or laptops.
         if has_full_tuition:
             return "fully_funded"
 

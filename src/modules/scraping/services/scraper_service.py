@@ -163,7 +163,7 @@ class ScraperService:
             if isinstance(source_config["pagination_config"], dict):
                 limit = source_config["pagination_config"].get("limit", 50)
 
-            raw_items = await adapter.fetch(limit=limit)
+            raw_items = await adapter.fetch_with_details(limit=limit)
 
             # 3. Process each raw item with opportunity filtering
             for item in raw_items:

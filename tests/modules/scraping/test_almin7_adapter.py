@@ -96,7 +96,7 @@ async def test_almin7_adapter_fetch_html_listings():
     sample_cards = []
     for i in range(1, 15):
         sample_cards.append(f"""
-        <article class="al7-archive-card post-{i} scholarship type-scholarship location-turkey">
+        <article class="al7-scholarship-page-card post-{i} scholarship type-scholarship location-turkey">
             <h2 class="al7-archive-posttitle">
                 <a href="https://almin7.com/scholarship/turkey-{i}/">منحة ممولة بالكامل رقم {i} لدراسة البكالوريوس في تركيا</a>
             </h2>
@@ -117,7 +117,7 @@ async def test_almin7_adapter_fetch_html_listings():
     # Add 6 general advice articles (e.g. from non-scholarship categories)
     for j in range(15, 21):
         sample_cards.append(f"""
-        <article class="al7-archive-card post-{j} post type-post category-articles">
+        <article class="al7-scholarship-page-card post-{j} post type-post category-articles">
             <h2 class="al7-archive-posttitle">
                 <a href="https://almin7.com/article-{j}/">نصائح وإرشادات عامة رقم {j} للدراسة في الخارج</a>
             </h2>
@@ -138,6 +138,8 @@ async def test_almin7_adapter_fetch_html_listings():
     mock_response = MagicMock()
     mock_response.text = html_content
     mock_response.is_success = True
+    # Set a realistic URL so the redirect-safety check in fetch() passes correctly
+    mock_response.url = "https://almin7.com/scholarship/"
 
     adapter = Almin7Adapter()
     adapter.http_client.get = AsyncMock(return_value=mock_response)
@@ -261,3 +263,62 @@ def test_almin7_adapter_reject_articles_and_specializations():
 
     for item in study_guide_items:
         assert adapter.is_opportunity(item) is False
+
+
+def test_almin7_parse_eligibility_text_only():
+    """Case A: eligibility_text present, no nationalities → eligibility contains text only."""
+    adapter = Almin7Adapter()
+    raw_item = {
+        "title": "منحة جامعة ميونخ في ألمانيا 2026",
+        "link": "https://almin7.com/scholarship/munich-2026/",
+        "source_url": "https://almin7.com/scholarship/munich-2026/",
+        "content": "منحة ممولة بالكامل",
+        "eligibility_text": "Applicants must have a GPA of 3.0 or above.",
+        "eligible_nationalities": [],
+    }
+    parsed = adapter.parse(raw_item)
+    assert "eligibility" in parsed
+    elig = parsed["eligibility"]
+    assert elig["eligibility_text"] == "Applicants must have a GPA of 3.0 or above."
+    assert "eligible_nationalities" not in elig
+
+
+def test_almin7_parse_eligibility_text_and_nationalities():
+    """Case B: both eligibility_text and nationality taxonomy → both stored."""
+    adapter = Almin7Adapter()
+    raw_item = {
+        "title": "منحة الحكومة التركية 2026",
+        "link": "https://almin7.com/scholarship/turkey-2026/",
+        "source_url": "https://almin7.com/scholarship/turkey-2026/",
+        "content": "منحة ممولة بالكامل في تركيا",
+        "eligibility_text": "يجب أن يكون المتقدم حاصلاً على شهادة الثانوية العامة.",
+        "eligible_nationalities": ["فلسطين", "الأردن", "مصر"],
+    }
+    parsed = adapter.parse(raw_item)
+    assert "eligibility" in parsed
+    elig = parsed["eligibility"]
+    assert (
+        elig["eligibility_text"]
+        == "يجب أن يكون المتقدم حاصلاً على شهادة الثانوية العامة."
+    )
+    assert elig["eligible_nationalities"] == ["فلسطين", "الأردن", "مصر"]
+
+
+def test_almin7_parse_no_nationality_inference_from_prose():
+    """Case C: narrative text mentions a country → must NOT create eligible_nationalities."""
+    adapter = Almin7Adapter()
+    raw_item = {
+        "title": "منحة جامعة أنقرة",
+        "link": "https://almin7.com/scholarship/ankara-2026/",
+        "source_url": "https://almin7.com/scholarship/ankara-2026/",
+        "content": "أن تكون من غير المواطنين الأتراك. يجب أن يكون عمرك أقل من 30 عامًا.",
+        "eligibility_text": "أن تكون من غير المواطنين الأتراك. يجب أن يكون عمرك أقل من 30 عامًا.",
+        # No nationality taxonomy provided — must NOT be inferred from prose
+    }
+    parsed = adapter.parse(raw_item)
+    elig = parsed.get("eligibility", {})
+    assert "eligible_nationalities" not in elig
+    assert (
+        elig.get("eligibility_text")
+        == "أن تكون من غير المواطنين الأتراك. يجب أن يكون عمرك أقل من 30 عامًا."
+    )
