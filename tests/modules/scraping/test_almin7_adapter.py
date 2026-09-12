@@ -91,51 +91,234 @@ def test_almin7_adapter_is_opportunity_by_category():
 
 
 @pytest.mark.asyncio
-async def test_almin7_adapter_fetch_20_articles_and_filter():
-    adapter = Almin7Adapter()
-
-    # 20 عنصر خام: 14 فرصة حقيقية + 6 مقالات إرشادية عامة
-    raw_posts = []
+async def test_almin7_adapter_fetch_html_listings():
+    # Simulate HTML response from /scholarship/
+    sample_cards = []
     for i in range(1, 15):
-        raw_posts.append(
-            {
-                "id": i,
-                "title": {
-                    "rendered": f"منحة ممولة بالكامل رقم {i} لدراسة البكالوريوس في تركيا"
-                },
-                "content": {
-                    "rendered": f"<p>تفاصيل المنحة رقم {i}. آخر موعد: 20 مارس 2026</p>"
-                },
-                "categories": ["منح دراسية", "تركيا"],
-                "link": f"https://almin7.com/scholarship-{i}",
-            }
-        )
+        sample_cards.append(f"""
+        <article class="al7-scholarship-page-card post-{i} scholarship type-scholarship location-turkey">
+            <h2 class="al7-archive-posttitle">
+                <a href="https://almin7.com/scholarship/turkey-{i}/">منحة ممولة بالكامل رقم {i} لدراسة البكالوريوس في تركيا</a>
+            </h2>
+            <div class="al7-archive-meta">
+                <span class="al7-archive-type">منحة</span>
+            </div>
+            <p class="al7-archive-excerpt">تفاصيل المنحة رقم {i}. بكالوريوس وماجستير.</p>
+            <div class="al7-archive-taxline">
+                <a href="https://almin7.com/location/turkey/">تركيا</a>
+            </div>
+            <div class="al7-archive-cardfoot">
+                <span>20 مارس، 2026</span>
+                <a class="al7-archive-action" href="https://university-{i}.edu.tr/apply">التقديم الرسمي</a>
+            </div>
+        </article>
+        """)
+
+    # Add 6 general advice articles (e.g. from non-scholarship categories)
     for j in range(15, 21):
-        raw_posts.append(
-            {
-                "id": j,
-                "title": {"rendered": f"نصائح وإرشادات عامة رقم {j} للدراسة في الخارج"},
-                "content": {"rendered": f"<p>مقال عام غير مرتبط بمنحة {j}.</p>"},
-                "categories": ["مقالات", "نصائح"],
-                "link": f"https://almin7.com/article-{j}",
-            }
-        )
+        sample_cards.append(f"""
+        <article class="al7-scholarship-page-card post-{j} post type-post category-articles">
+            <h2 class="al7-archive-posttitle">
+                <a href="https://almin7.com/article-{j}/">نصائح وإرشادات عامة رقم {j} للدراسة في الخارج</a>
+            </h2>
+            <div class="al7-archive-meta">
+                <span class="al7-archive-type">مقال</span>
+            </div>
+            <p class="al7-archive-excerpt">مقال عام غير مرتبط بمنحة {j}.</p>
+            <div class="al7-archive-cardfoot">
+                <span>15 مارس، 2026</span>
+            </div>
+        </article>
+        """)
+
+    html_content = (
+        f"<html><body><div class='posts'>{''.join(sample_cards)}</div></body></html>"
+    )
 
     mock_response = MagicMock()
-    mock_response.json.return_value = raw_posts
+    mock_response.text = html_content
     mock_response.is_success = True
+    # Set a realistic URL so the redirect-safety check in fetch() passes correctly
+    mock_response.url = "https://almin7.com/scholarship/"
 
+    adapter = Almin7Adapter()
     adapter.http_client.get = AsyncMock(return_value=mock_response)
 
-    # 1. جلب 20 مقال بالضبط
+    # 1. جلب 20 مقال بالضبط عبر HTML scraper
     raw_items = await adapter.fetch(limit=20)
     assert len(raw_items) == 20
 
-    # 2. تطبيق is_opportunity لتصفية المقالات الإرشادية
+    # 2. فحص استخراج الحقول من كروت الـ HTML
+    first_item = raw_items[0]
+    assert "منحة ممولة بالكامل رقم 1" in first_item["title"]
+    assert first_item["country"] == "تركيا"
+    assert first_item["application_url"] == "https://university-1.edu.tr/apply"
+    assert first_item["badge"] == "منحة"
+
+    # 3. تطبيق is_opportunity لتصفية المقالات العامة واستبقاء المنح فقط
     filtered_opportunities = [
         item for item in raw_items if adapter.is_opportunity(item)
     ]
 
-    # إثبات أن التصفية تعمل على دفعة بحجم 20 واستبعدت المقالات العامة
-    assert len(filtered_opportunities) < 20
     assert len(filtered_opportunities) == 14
+    for opp in filtered_opportunities:
+        assert opp["badge"] == "منحة"
+        parsed = adapter.parse(opp)
+        assert parsed["opportunity_type"] == "scholarship"
+        assert parsed["application_url"].startswith("https://university-")
+
+
+def test_almin7_adapter_parse_scraped_card():
+    adapter = Almin7Adapter()
+    scraped_item = {
+        "title": "منحة الجامعة الرومانية الأمريكية",
+        "link": "https://almin7.com/scholarship/romanian-american-university/",
+        "source_url": "https://almin7.com/scholarship/romanian-american-university/",
+        "application_url": "https://www.rau.ro/scholarship-regulations/?lang=en",
+        "excerpt": "تعد منحة الجامعة الرومانية الأمريكية واحدة من أبرز الفرص الدراسية لدراسة البكالوريوس والماجستير ممول بالكامل",
+        "content": "تعد منحة الجامعة الرومانية الأمريكية واحدة من أبرز الفرص الدراسية لدراسة البكالوريوس والماجستير ممول بالكامل. آخر موعد للتقديم: 15 أكتوبر 2026",
+        "published_at": "6 سبتمبر، 2026",
+        "country": "رومانيا",
+        "badge": "منحة",
+        "categories": ["منحة", "رومانيا", "scholarship-in-europe"],
+        "card_classes": ["al7-archive-card", "type-scholarship", "location-rwmanya"],
+    }
+
+    parsed = adapter.parse(scraped_item)
+    assert parsed["title"] == "منحة الجامعة الرومانية الأمريكية"
+    assert (
+        parsed["source_url"]
+        == "https://almin7.com/scholarship/romanian-american-university/"
+    )
+    assert (
+        parsed["application_url"]
+        == "https://www.rau.ro/scholarship-regulations/?lang=en"
+    )
+    assert parsed["country"] == "رومانيا"
+    assert parsed["opportunity_type"] == "scholarship"
+    assert "Bachelor" in parsed["study_levels"]
+    assert "Master" in parsed["study_levels"]
+    assert parsed["funding_type"] == "fully_funded"
+    assert parsed["deadline"] == "15 أكتوبر 2026"
+    assert adapter.is_opportunity(scraped_item) is True
+
+
+def test_almin7_adapter_reject_articles_and_specializations():
+    adapter = Almin7Adapter()
+
+    # 1. Reject by article badge
+    article_by_badge = {
+        "title": "ترتيب الجامعات الهنغارية لعام 2026",
+        "badge": "مقال",
+        "card_classes": [
+            "al7-archive-card",
+            "type-post",
+            "category-university-rankings",
+        ],
+        "link": "https://almin7.com/university-rankings/hungary/",
+    }
+    assert adapter.is_opportunity(article_by_badge) is False
+
+    # 2. Reject by URL pattern (specialization)
+    spec_item = {
+        "title": "دراسة الطب البشري في الأرجنتين",
+        "badge": "",
+        "card_classes": ["type-post"],
+        "link": "https://almin7.com/specialization/medicine-argentina/",
+    }
+    assert adapter.is_opportunity(spec_item) is False
+
+    # 3. Reject study abroad guides
+    guide_item = {
+        "title": "الدراسة في التشيك والتكاليف السنوية",
+        "badge": "مقال",
+        "card_classes": ["type-post", "category-study-abroad"],
+        "link": "https://almin7.com/study-abroad/czech/",
+    }
+    assert adapter.is_opportunity(guide_item) is False
+
+    # 4. Reject generic "study X in Y" articles
+    study_guide_items = [
+        {
+            "title": "دراسة هندسة الحاسوب في قطر",
+            "link": "https://almin7.com/study-computer-engineering-qatar/",
+            "categories": ["قطر"],
+        },
+        {
+            "title": "دراسة الرياضيات في عُمان",
+            "link": "https://almin7.com/study-mathematics-oman/",
+            "categories": ["عُمان"],
+        },
+        {
+            "title": "دراسة هندسة الحاسوب في بروناي دار السلام",
+            "link": "https://almin7.com/study-computer-engineering-brunei/",
+            "categories": ["بروناي دار السلام"],
+        },
+        {
+            "title": "دراسة الفيزياء في هنغاريا",
+            "link": "https://almin7.com/study-physics-hungary/",
+            "categories": ["هنغاريا"],
+        },
+    ]
+
+    for item in study_guide_items:
+        assert adapter.is_opportunity(item) is False
+
+
+def test_almin7_parse_eligibility_text_only():
+    """Case A: eligibility_text present, no nationalities → eligibility contains text only."""
+    adapter = Almin7Adapter()
+    raw_item = {
+        "title": "منحة جامعة ميونخ في ألمانيا 2026",
+        "link": "https://almin7.com/scholarship/munich-2026/",
+        "source_url": "https://almin7.com/scholarship/munich-2026/",
+        "content": "منحة ممولة بالكامل",
+        "eligibility_text": "Applicants must have a GPA of 3.0 or above.",
+        "eligible_nationalities": [],
+    }
+    parsed = adapter.parse(raw_item)
+    assert "eligibility" in parsed
+    elig = parsed["eligibility"]
+    assert elig["eligibility_text"] == "Applicants must have a GPA of 3.0 or above."
+    assert "eligible_nationalities" not in elig
+
+
+def test_almin7_parse_eligibility_text_and_nationalities():
+    """Case B: both eligibility_text and nationality taxonomy → both stored."""
+    adapter = Almin7Adapter()
+    raw_item = {
+        "title": "منحة الحكومة التركية 2026",
+        "link": "https://almin7.com/scholarship/turkey-2026/",
+        "source_url": "https://almin7.com/scholarship/turkey-2026/",
+        "content": "منحة ممولة بالكامل في تركيا",
+        "eligibility_text": "يجب أن يكون المتقدم حاصلاً على شهادة الثانوية العامة.",
+        "eligible_nationalities": ["فلسطين", "الأردن", "مصر"],
+    }
+    parsed = adapter.parse(raw_item)
+    assert "eligibility" in parsed
+    elig = parsed["eligibility"]
+    assert (
+        elig["eligibility_text"]
+        == "يجب أن يكون المتقدم حاصلاً على شهادة الثانوية العامة."
+    )
+    assert elig["eligible_nationalities"] == ["فلسطين", "الأردن", "مصر"]
+
+
+def test_almin7_parse_no_nationality_inference_from_prose():
+    """Case C: narrative text mentions a country → must NOT create eligible_nationalities."""
+    adapter = Almin7Adapter()
+    raw_item = {
+        "title": "منحة جامعة أنقرة",
+        "link": "https://almin7.com/scholarship/ankara-2026/",
+        "source_url": "https://almin7.com/scholarship/ankara-2026/",
+        "content": "أن تكون من غير المواطنين الأتراك. يجب أن يكون عمرك أقل من 30 عامًا.",
+        "eligibility_text": "أن تكون من غير المواطنين الأتراك. يجب أن يكون عمرك أقل من 30 عامًا.",
+        # No nationality taxonomy provided — must NOT be inferred from prose
+    }
+    parsed = adapter.parse(raw_item)
+    elig = parsed.get("eligibility", {})
+    assert "eligible_nationalities" not in elig
+    assert (
+        elig.get("eligibility_text")
+        == "أن تكون من غير المواطنين الأتراك. يجب أن يكون عمرك أقل من 30 عامًا."
+    )

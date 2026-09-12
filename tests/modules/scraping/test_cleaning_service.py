@@ -55,3 +55,19 @@ def test_cleaning_service_deadline_from_description_text():
     assert isinstance(cleaned["deadline"], datetime)
     assert cleaned["deadline"].month == 12
     assert cleaned["deadline"].day == 25
+
+
+def test_cleaning_service_same_domain_internal_link_filtered():
+    """Verify internal links on the same domain as source_url are skipped as application_url."""
+    service = CleaningService()
+    raw_data = {
+        "title": "GrabScholarship Article",
+        "description": """
+            <p>Check out our related scholarship post:</p>
+            <p><a href="https://grabscholarships.com/another-scholarship-post/">Apply for another scholarship here</a></p>
+        """,
+        "source_url": "https://grabscholarships.com/current-post/",
+    }
+
+    cleaned = service.clean(raw_data)
+    assert cleaned["application_url"] is None
