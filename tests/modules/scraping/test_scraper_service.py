@@ -397,3 +397,50 @@ async def test_scraper_service_source_failure_resilience():
     assert payload.total_opportunities == 2
     assert payload.succeeded_sources == ["source_succeeding"]
     assert payload.failed_sources == ["source_failing"]
+
+
+@pytest.mark.asyncio
+async def test_scraper_service_webhook_failure_does_not_fail_scrape():
+    """Explicit business requirement: Webhook delivery failure MUST NOT fail the scraping run."""
+    mock_source = MagicMock()
+    mock_source.id = "src-webhook-fail"
+    mock_source.name = "almin7"
+    mock_source.base_url = "https://almin7.com"
+    mock_source.api_endpoint = "/wp-json/wp/v2/posts"
+    mock_source.method = "wordpress_api"
+    mock_source.pagination_config = {}
+    mock_source.field_mapping = {}
+
+    mock_source_repo = MagicMock()
+    mock_source_repo.get_by_ids = AsyncMock(return_value=[mock_source])
+    mock_source_repo.mark_scraped = AsyncMock()
+
+    mock_opp_repo = MagicMock()
+    mock_opp_repo.create_raw = AsyncMock(return_value=MagicMock(id="raw-1"))
+    mock_opp_repo.create_cleaned = AsyncMock()
+    mock_opp_repo.mark_raw_status = AsyncMock()
+    mock_opp_repo.exists_by_content_hash = AsyncMock(return_value=False)
+
+    # Webhook client raises an exception
+    failing_webhook = MagicMock()
+    failing_webhook.notify_scrape_complete = AsyncMock(
+        side_effect=RuntimeError(
+            "Main Service Webhook Connection Refused (port 3000 down)"
+        )
+    )
+
+    service = ScraperService(
+        source_repo=mock_source_repo,
+        opportunity_repo=mock_opp_repo,
+        webhook_client=failing_webhook,
+    )
+    service._process_source = AsyncMock(return_value=5)
+
+    result = await service.run(
+        source_ids=["src-webhook-fail"], batch_id="batch-webhook-fail"
+    )
+
+    # Scrape run must still succeed with total_opportunities == 5
+    assert result.total_opportunities == 5
+    assert result.succeeded_sources == ["almin7"]
+    assert len(result.failed_sources) == 0

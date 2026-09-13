@@ -63,3 +63,13 @@ def test_normalization_service_remote_detection():
     assert (
         service.detect_is_remote(None, search_text="On-campus study in Berlin") is False
     )
+
+
+def test_normalization_service_no_false_positive_abbreviations():
+    service = NormalizationService()
+    # "ma", "ba", "bs" alone in search text should NOT produce Master or Bachelor
+    normalized = service.normalize_study_levels(
+        [], search_text="Candidates from MA or BA area with BS degrees"
+    )
+    assert "Master" not in normalized
+    assert "Bachelor" not in normalized
