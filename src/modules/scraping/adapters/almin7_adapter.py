@@ -1,9 +1,10 @@
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 
 from src.modules.infrastructure.http.base_http_client import BaseHttpClient
 from src.modules.infrastructure.http.exceptions import HttpClientError
@@ -142,10 +143,15 @@ class Almin7Adapter(BaseAdapter):
                     break
 
             soup = BeautifulSoup(html_text, "html.parser")
-            cards = soup.find_all(
-                "article",
-                class_="al7-scholarship-page-card",
+            # Adjust type of cards to a list of Tag for consistent typing
+            cards = cast(
+                list[Tag],
+                soup.find_all(
+                    "article",
+                    class_="al7-scholarship-page-card",
+                ),
             )
+            # filtered placeholder (unused)
 
             # Fallback: site may have switched CSS class to al7-archive-card.
             # Only accept cards that carry type-scholarship in their class list
@@ -160,9 +166,11 @@ class Almin7Adapter(BaseAdapter):
                     self.source_name,
                 )
                 candidate_cards = soup.find_all("article", class_="al7-archive-card")
-                filtered: list = []
+                filtered: list[Tag] = []
                 for candidate in candidate_cards:
-                    candidate_classes: list[Any] = candidate.get("class") or []
+                    candidate_classes: list[Any] = cast(
+                        list[Any], candidate.get("class") or []
+                    )
                     # Must carry WordPress post-type "type-scholarship"
                     if "type-scholarship" not in candidate_classes:
                         continue
