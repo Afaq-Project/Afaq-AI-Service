@@ -446,6 +446,12 @@ class Almin7Adapter(BaseAdapter):
 
         taxonomies = self._extract_detail_taxonomies(soup)
 
+        reliable_nationalities = self._filter_reliable_nationalities(
+            taxonomies.get("nationalities") or [],
+            eligibility_text=eligibility_text,
+            title=title,
+        )
+
         fields_of_study = self._extract_fields_from_detail(content_node)
 
         study_levels = self._extract_study_levels_from_detail(content_node)
@@ -479,8 +485,184 @@ class Almin7Adapter(BaseAdapter):
             "funding_details": funding_details,
             "deadline": deadline,
             "eligibility_text": eligibility_text,
-            "eligible_nationalities": taxonomies.get("nationalities") or [],
+            "eligible_nationalities": reliable_nationalities,
         }
+
+    GENERIC_ARAB_NATIONALITIES: set[str] = {
+        "إريتريا",
+        "الأردن",
+        "الإمارات",
+        "البحرين",
+        "الجزائر",
+        "السعودية",
+        "السودان",
+        "الصومال",
+        "العراق",
+        "الكويت",
+        "المغرب",
+        "النيجر",
+        "اليمن",
+        "تشاد",
+        "تونس",
+        "جزر القمر",
+        "جنوب السودان",
+        "جيبوتي",
+        "سوريا",
+        "عُمان",
+        "فلسطين",
+        "قطر",
+        "لبنان",
+        "ليبيا",
+        "مالي",
+        "مصر",
+        "موريتانيا",
+    }
+
+    EXCLUSIONARY_NATIONALITY_PATTERNS: list[re.Pattern[str]] = [
+        re.compile(
+            r"(?i)\b(?:من\s+)?(?:غير|دون|سوى)\s+(?:المواطنين|حاملي\s+الجنسية|جنسية|مواطني|حملة)\s+\w+"
+        ),
+        re.compile(r"(?i)\b(?:من\s+)?جنسية\s+غير\s+\w+"),
+        re.compile(
+            r"(?i)\bمن\s+خارج\s+(?:المملكة\s+المتحدة|الاتحاد\s+الأوروبي|الولايات\s+المتحدة|\w+)"
+        ),
+        re.compile(
+            r"(?i)\b(?:غير\s+حامل\s+للجنسية|غير\s+حاملين\s+للجنسية|غير\s+حاملة\s+للجنسية)"
+        ),
+        re.compile(r"(?i)\b(?:non-|not\s+a\s+citizen\s+of|outside\s+of)\s*\w+"),
+    ]
+
+    BROAD_OR_ALL_NATIONALITY_PATTERNS: list[re.Pattern[str]] = [
+        re.compile(r"(?i)(?:جميع|كافة|مختلف|سائر)\s+(?:الجنسيات|الدول|البلدان)"),
+        re.compile(r"(?i)(?:جميع|كافة)\s+أنحاء\s+العالم"),
+        re.compile(
+            r"(?i)\b(all\s+nationalities|any\s+nationality|international\s+students|all\s+countries)\b"
+        ),
+        re.compile(r"(?i)(?:الطلاب\s+الدوليين|للطلاب\s+الدوليين|طالب[اً]?\s+دولي[اً]?)"),
+        re.compile(
+            r"(?i)(?:الطلاب\s+العرب|للطلاب\s+العرب|الدول\s+العربية|العالم\s+العربي|الوطن\s+العربي|جامعة\s+الدول\s+العربية)"
+        ),
+    ]
+
+    SPECIFIC_NATIONALITY_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+        (
+            re.compile(
+                r"(?i)(?:مخصصة\s+ل|حصراً\s+ل|فقط\s+ل|حاملي\s+الجنسية\s+ال)?(?:للطلاب\s+|للمواطنين\s+|مواطني\s+|طلاب\s+|أبناء\s+)(?:السعوديين|السعودية|سعودي\s+الجنسية)|(?:للسعوديين|سعودي\s+الجنسية)\s*(?:فقط|حصراً)?"
+            ),
+            "السعودية",
+        ),
+        (
+            re.compile(
+                r"(?i)(?:مخصصة\s+ل|حصراً\s+ل|فقط\s+ل|حاملي\s+الجنسية\s+ال)?(?:للطلاب\s+|للمواطنين\s+|مواطني\s+|طلاب\s+|أبناء\s+)(?:المصريين|المصرية|مصري\s+الجنسية)|(?:للمصريين|مصري\s+الجنسية)\s*(?:فقط|حصراً)?"
+            ),
+            "مصر",
+        ),
+        (
+            re.compile(
+                r"(?i)(?:مخصصة\s+ل|حصراً\s+ل|فقط\s+ل|حاملي\s+الجنسية\s+ال)?(?:للطلاب\s+|للمواطنين\s+|مواطني\s+|طلاب\s+|أبناء\s+)(?:السوريين|السورية|سوري\s+الجنسية)|(?:للسوريين|سوري\s+الجنسية)\s*(?:فقط|حصراً)?"
+            ),
+            "سوريا",
+        ),
+        (
+            re.compile(
+                r"(?i)(?:مخصصة\s+ل|حصراً\s+ل|فقط\s+ل|حاملي\s+الجنسية\s+ال)?(?:للطلاب\s+|للمواطنين\s+|مواطني\s+|طلاب\s+|أبناء\s+)(?:الفلسطينيين|الفلسطينية|فلسطيني\s+الجنسية)|(?:للفلسطينيين|فلسطيني\s+الجنسية)\s*(?:فقط|حصراً)?"
+            ),
+            "فلسطين",
+        ),
+        (
+            re.compile(
+                r"(?i)(?:مخصصة\s+ل|حصراً\s+ل|فقط\s+ل|حاملي\s+الجنسية\s+ال)?(?:للطلاب\s+|للمواطنين\s+|مواطني\s+|طلاب\s+|أبناء\s+)(?:اليمنيين|اليمنية|يمني\s+الجنسية)|(?:لليمنيين|يمني\s+الجنسية)\s*(?:فقط|حصراً)?"
+            ),
+            "اليمن",
+        ),
+        (
+            re.compile(
+                r"(?i)(?:مخصصة\s+ل|حصراً\s+ل|فقط\s+ل|حاملي\s+الجنسية\s+ال)?(?:للطلاب\s+|للمواطنين\s+|مواطني\s+|طلاب\s+|أبناء\s+)(?:الأردنيين|الأردنية|أردني\s+الجنسية)|(?:للأردنيين|أردني\s+الجنسية)\s*(?:فقط|حصراً)?"
+            ),
+            "الأردن",
+        ),
+        (
+            re.compile(
+                r"(?i)(?:مخصصة\s+ل|حصراً\s+ل|فقط\s+ل|حاملي\s+الجنسية\s+ال)?(?:للطلاب\s+|للمواطنين\s+|مواطني\s+|طلاب\s+|أبناء\s+)(?:الإماراتيين|الإماراتية|إماراتي\s+الجنسية)|(?:للإماراتيين|إماراتي\s+الجنسية)\s*(?:فقط|حصراً)?"
+            ),
+            "الإمارات",
+        ),
+        (
+            re.compile(
+                r"(?i)(?:مخصصة\s+ل|حصراً\s+ل|فقط\s+ل|حاملي\s+الجنسية\s+ال)?(?:للطلاب\s+|للمواطنين\s+|مواطني\s+|طلاب\s+|أبناء\s+)(?:الكويتيين|الكويتية|كويتي\s+الجنسية)|(?:للكويتيين|كويتي\s+الجنسية)\s*(?:فقط|حصراً)?"
+            ),
+            "الكويت",
+        ),
+        (
+            re.compile(
+                r"(?i)(?:مخصصة\s+ل|حصراً\s+ل|فقط\s+ل|حاملي\s+الجنسية\s+ال)?(?:للطلاب\s+|للمواطنين\s+|مواطني\s+|طلاب\s+|أبناء\s+)(?:القطريين|القطرية|قطري\s+الجنسية)|(?:للقطريين|قطري\s+الجنسية)\s*(?:فقط|حصراً)?"
+            ),
+            "قطر",
+        ),
+        (
+            re.compile(
+                r"(?i)(?:مخصصة\s+ل|حصراً\s+ل|فقط\s+ل|حاملي\s+الجنسية\s+ال)?(?:للطلاب\s+|للمواطنين\s+|مواطني\s+|طلاب\s+|أبناء\s+)(?:البحرينيين|البحرينية|بحريني\s+الجنسية)|(?:للبحرينيين|بحريني\s+الجنسية)\s*(?:فقط|حصراً)?"
+            ),
+            "البحرين",
+        ),
+        (
+            re.compile(
+                r"(?i)(?:مخصصة\s+ل|حصراً\s+ل|فقط\s+ل|حاملي\s+الجنسية\s+ال)?(?:للطلاب\s+|للمواطنين\s+|مواطني\s+|طلاب\s+|أبناء\s+)(?:العمانيين|العمانية|عماني\s+الجنسية)|(?:للعمانيين|عماني\s+الجنسية)\s*(?:فقط|حصراً)?"
+            ),
+            "عُمان",
+        ),
+    ]
+
+    def _filter_reliable_nationalities(
+        self,
+        raw_nationalities: list[str] | None,
+        eligibility_text: str | None = None,
+        title: str = "",
+    ) -> list[str]:
+        """
+        يتحقق من موثوقية الجنسيات المستخرجة ويمنع إسناد قائمة الجنسيات العربية العامة الافتراضية.
+        - إذا كانت القائمة هي القائمة الافتراضية للموقع (أكثر من 15 دولة عربية) يتم استبعادها.
+        - إذا كان النص يحتوي على صياغة استبعاد (مثل 'غير تركي' أو 'من خارج بريطانيا') لا يتم إسناد جنسيات.
+        - إذا كان النص يحتوي على صياغة عامة (مثل 'جميع الجنسيات' أو 'الطلاب الدوليين') لا يتم إسناد جنسيات.
+        - إذا كان النص يحدد صراحة جنسية معينة (مثل 'للسعوديين فقط') يتم استخراجها.
+        - إذا كانت التاكسونومي محددة صراحة وتتضمن دولاً محددة ولا تتعارض مع النص يتم الحفاظ عليها.
+        """
+        text = f"{title} {eligibility_text or ''}".strip()
+
+        has_exclusion = any(
+            p.search(text) for p in self.EXCLUSIONARY_NATIONALITY_PATTERNS
+        )
+        has_broad = any(
+            p.search(text) for p in self.BROAD_OR_ALL_NATIONALITY_PATTERNS
+        )
+
+        nats_list = raw_nationalities if isinstance(raw_nationalities, list) else []
+
+        is_generic_dump = False
+        if nats_list:
+            overlap = set(nats_list).intersection(self.GENERIC_ARAB_NATIONALITIES)
+            if len(nats_list) >= 15 or len(overlap) >= 15:
+                is_generic_dump = True
+
+        # If taxonomy is a generic dump or text indicates exclusionary/broad eligibility
+        if is_generic_dump or has_exclusion or has_broad:
+            if not has_exclusion and not has_broad:
+                # Check for explicit specific nationality in text
+                for pat, nat in self.SPECIFIC_NATIONALITY_PATTERNS:
+                    if pat.search(text):
+                        return [nat]
+            return []
+
+        if nats_list and not is_generic_dump:
+            return list(nats_list)
+
+        # If nats_list is empty, also check if explicit specific nationality is in text
+        if text and not has_exclusion and not has_broad:
+            for pat, nat in self.SPECIFIC_NATIONALITY_PATTERNS:
+                if pat.search(text):
+                    return [nat]
+
+        return []
 
     def _extract_detail_taxonomies(
         self,
@@ -865,13 +1047,18 @@ class Almin7Adapter(BaseAdapter):
 
         eligibility_text = raw_item.get("eligibility_text")
 
-        nationalities = raw_item.get("eligible_nationalities")
+        raw_nationalities = raw_item.get("eligible_nationalities")
+        reliable_nationalities = self._filter_reliable_nationalities(
+            raw_nationalities if isinstance(raw_nationalities, list) else None,
+            eligibility_text=eligibility_text if isinstance(eligibility_text, str) else None,
+            title=title,
+        )
 
-        if isinstance(nationalities, list) and nationalities:
-            eligibility["eligible_nationalities"] = nationalities
+        if reliable_nationalities:
+            eligibility["eligible_nationalities"] = reliable_nationalities
 
         # Preserve the full eligibility text so downstream services (cleaning,
-        # normalization, matching) can use it.  Must NOT be inferred from prose.
+        # normalization, matching) can use it.
         if isinstance(eligibility_text, str) and eligibility_text.strip():
             eligibility["eligibility_text"] = eligibility_text.strip()
 

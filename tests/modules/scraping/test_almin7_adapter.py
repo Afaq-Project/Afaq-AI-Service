@@ -322,3 +322,129 @@ def test_almin7_parse_no_nationality_inference_from_prose():
         elig.get("eligibility_text")
         == "أن تكون من غير المواطنين الأتراك. يجب أن يكون عمرك أقل من 30 عامًا."
     )
+
+
+def test_almin7_generic_arab_nationalities_rejected():
+    """Generic 27-country default Arab list must NOT be treated as valid eligible_nationalities."""
+    adapter = Almin7Adapter()
+    generic_27 = [
+        "إريتريا", "الأردن", "الإمارات", "البحرين", "الجزائر", "السعودية", "السودان",
+        "الصومال", "العراق", "الكويت", "المغرب", "النيجر", "اليمن", "تشاد", "تونس",
+        "جزر القمر", "جنوب السودان", "جيبوتي", "سوريا", "عُمان", "فلسطين", "قطر",
+        "لبنان", "ليبيا", "مالي", "مصر", "موريتانيا",
+    ]
+    raw_item = {
+        "title": "منحة الجامعة الرومانية الأمريكية",
+        "link": "https://almin7.com/scholarship/rau-2026/",
+        "source_url": "https://almin7.com/scholarship/rau-2026/",
+        "content": "منحة ممولة جزئياً في رومانيا",
+        "eligibility_text": "يجب أن يكون المتقدم حاصلاً على شهادة الثانوية العامة بمعدل جيد جداً.",
+        "eligible_nationalities": generic_27,
+    }
+    parsed = adapter.parse(raw_item)
+    elig = parsed.get("eligibility", {})
+    assert "eligible_nationalities" not in elig
+    assert elig.get("eligibility_text") == "يجب أن يكون المتقدم حاصلاً على شهادة الثانوية العامة بمعدل جيد جداً."
+
+
+def test_almin7_non_turkish_wording_leaves_nationalities_empty():
+    """Non-Turkish wording must NOT produce Arab nationalities or any invented list."""
+    adapter = Almin7Adapter()
+    generic_27 = [
+        "إريتريا", "الأردن", "الإمارات", "البحرين", "الجزائر", "السعودية", "السودان",
+        "الصومال", "العراق", "الكويت", "المغرب", "النيجر", "اليمن", "تشاد", "تونس",
+        "جزر القمر", "جنوب السودان", "جيبوتي", "سوريا", "عُمان", "فلسطين", "قطر",
+        "لبنان", "ليبيا", "مالي", "مصر", "موريتانيا",
+    ]
+    raw_item = {
+        "title": "منحة جامعة إرجييس في تركيا",
+        "link": "https://almin7.com/scholarship/erciyes-2026/",
+        "source_url": "https://almin7.com/scholarship/erciyes-2026/",
+        "content": "أن تكون من جنسية غير تركية. تقديم شهادة الثانوية العامة.",
+        "eligibility_text": "أن تكون من جنسية غير تركية. تقديم شهادة الثانوية العامة.",
+        "eligible_nationalities": generic_27,
+    }
+    parsed = adapter.parse(raw_item)
+    elig = parsed.get("eligibility", {})
+    assert "eligible_nationalities" not in elig
+    assert elig.get("eligibility_text") == "أن تكون من جنسية غير تركية. تقديم شهادة الثانوية العامة."
+
+
+def test_almin7_broad_all_nationalities_leaves_nationalities_empty():
+    """Broad all-nationalities wording must NOT invent a nationality list."""
+    adapter = Almin7Adapter()
+    raw_item = {
+        "title": "منحة جامعة ليفربول للطلاب الدوليين",
+        "link": "https://almin7.com/scholarship/liverpool-2026/",
+        "source_url": "https://almin7.com/scholarship/liverpool-2026/",
+        "content": "المنحة متاحة لجميع الجنسيات من كافة أنحاء العالم.",
+        "eligibility_text": "المنحة متاحة لجميع الجنسيات من كافة أنحاء العالم.",
+        "eligible_nationalities": ["السعودية", "مصر", "الأردن"],
+    }
+    parsed = adapter.parse(raw_item)
+    elig = parsed.get("eligibility", {})
+    assert "eligible_nationalities" not in elig
+    assert elig.get("eligibility_text") == "المنحة متاحة لجميع الجنسيات من كافة أنحاء العالم."
+
+
+def test_almin7_specific_single_nationality_preserved():
+    """Specific single nationality (e.g. Saudi only) is preserved correctly."""
+    adapter = Almin7Adapter()
+    raw_item = {
+        "title": "منحة برنامج الابتعاث السعودي",
+        "link": "https://almin7.com/scholarship/saudi-scholarship-2026/",
+        "source_url": "https://almin7.com/scholarship/saudi-scholarship-2026/",
+        "content": "المنحة مخصصة للطلاب السعوديين فقط.",
+        "eligibility_text": "المنحة مخصصة للطلاب السعوديين فقط والحصول على معدل تراكمي 3.5.",
+        "eligible_nationalities": ["السعودية"],
+    }
+    parsed = adapter.parse(raw_item)
+    elig = parsed.get("eligibility", {})
+    assert elig.get("eligible_nationalities") == ["السعودية"]
+    assert elig.get("eligibility_text") == "المنحة مخصصة للطلاب السعوديين فقط والحصول على معدل تراكمي 3.5."
+
+
+def test_almin7_detail_html_parsing_rejects_generic_pills():
+    """_parse_detail_html rejects generic Arab pills while preserving eligibility_text."""
+    adapter = Almin7Adapter()
+    html = """
+    <div class="al7-single-tax-panel">
+        <a href="https://almin7.com/location/rwmanya/" class="al7-single-tax-pill">رومانيا</a>
+        <a href="https://almin7.com/nationality/irytrya/" class="al7-single-tax-pill">إريتريا</a>
+        <a href="https://almin7.com/nationality/alardn/" class="al7-single-tax-pill">الأردن</a>
+        <a href="https://almin7.com/nationality/alimarat/" class="al7-single-tax-pill">الإمارات</a>
+        <a href="https://almin7.com/nationality/albhryn/" class="al7-single-tax-pill">البحرين</a>
+        <a href="https://almin7.com/nationality/aljzayr/" class="al7-single-tax-pill">الجزائر</a>
+        <a href="https://almin7.com/nationality/alsawdyh/" class="al7-single-tax-pill">السعودية</a>
+        <a href="https://almin7.com/nationality/alswdan/" class="al7-single-tax-pill">السودان</a>
+        <a href="https://almin7.com/nationality/alswmal/" class="al7-single-tax-pill">الصومال</a>
+        <a href="https://almin7.com/nationality/alaraq/" class="al7-single-tax-pill">العراق</a>
+        <a href="https://almin7.com/nationality/alkwyt/" class="al7-single-tax-pill">الكويت</a>
+        <a href="https://almin7.com/nationality/almghrb/" class="al7-single-tax-pill">المغرب</a>
+        <a href="https://almin7.com/nationality/alnyjr/" class="al7-single-tax-pill">النيجر</a>
+        <a href="https://almin7.com/nationality/alymn/" class="al7-single-tax-pill">اليمن</a>
+        <a href="https://almin7.com/nationality/tshad/" class="al7-single-tax-pill">تشاد</a>
+        <a href="https://almin7.com/nationality/twns/" class="al7-single-tax-pill">تونس</a>
+        <a href="https://almin7.com/nationality/jzr-alqmr/" class="al7-single-tax-pill">جزر القمر</a>
+        <a href="https://almin7.com/nationality/jnwb-alswdan/" class="al7-single-tax-pill">جنوب السودان</a>
+        <a href="https://almin7.com/nationality/jybwty/" class="al7-single-tax-pill">جيبوتي</a>
+        <a href="https://almin7.com/nationality/swrya/" class="al7-single-tax-pill">سوريا</a>
+        <a href="https://almin7.com/nationality/aman/" class="al7-single-tax-pill">عُمان</a>
+        <a href="https://almin7.com/nationality/flstyn/" class="al7-single-tax-pill">فلسطين</a>
+        <a href="https://almin7.com/nationality/qtr/" class="al7-single-tax-pill">قطر</a>
+        <a href="https://almin7.com/nationality/lbnan/" class="al7-single-tax-pill">لبنان</a>
+        <a href="https://almin7.com/nationality/lybya/" class="al7-single-tax-pill">ليبيا</a>
+        <a href="https://almin7.com/nationality/maly/" class="al7-single-tax-pill">مالي</a>
+        <a href="https://almin7.com/nationality/msr/" class="al7-single-tax-pill">مصر</a>
+        <a href="https://almin7.com/nationality/mwrytanya/" class="al7-single-tax-pill">موريتانيا</a>
+    </div>
+    <h1 class="al7-single-title">منحة الجامعة الرومانية الأمريكية</h1>
+    <div class="al7-single-content">
+        <h2>شروط التقديم</h2>
+        <p>الحصول على شهادة الثانوية العامة بمعدل جيد جداً وإتقان اللغة الإنجليزية.</p>
+    </div>
+    """
+    detail = adapter._parse_detail_html(html)
+    assert detail.get("eligible_nationalities") == []
+    assert detail.get("eligibility_text") == "الحصول على شهادة الثانوية العامة بمعدل جيد جداً وإتقان اللغة الإنجليزية."
+    assert detail.get("country") == "رومانيا"
