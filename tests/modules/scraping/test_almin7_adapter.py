@@ -328,10 +328,33 @@ def test_almin7_generic_arab_nationalities_rejected():
     """Generic 27-country default Arab list must NOT be treated as valid eligible_nationalities."""
     adapter = Almin7Adapter()
     generic_27 = [
-        "إريتريا", "الأردن", "الإمارات", "البحرين", "الجزائر", "السعودية", "السودان",
-        "الصومال", "العراق", "الكويت", "المغرب", "النيجر", "اليمن", "تشاد", "تونس",
-        "جزر القمر", "جنوب السودان", "جيبوتي", "سوريا", "عُمان", "فلسطين", "قطر",
-        "لبنان", "ليبيا", "مالي", "مصر", "موريتانيا",
+        "إريتريا",
+        "الأردن",
+        "الإمارات",
+        "البحرين",
+        "الجزائر",
+        "السعودية",
+        "السودان",
+        "الصومال",
+        "العراق",
+        "الكويت",
+        "المغرب",
+        "النيجر",
+        "اليمن",
+        "تشاد",
+        "تونس",
+        "جزر القمر",
+        "جنوب السودان",
+        "جيبوتي",
+        "سوريا",
+        "عُمان",
+        "فلسطين",
+        "قطر",
+        "لبنان",
+        "ليبيا",
+        "مالي",
+        "مصر",
+        "موريتانيا",
     ]
     raw_item = {
         "title": "منحة الجامعة الرومانية الأمريكية",
@@ -344,17 +367,43 @@ def test_almin7_generic_arab_nationalities_rejected():
     parsed = adapter.parse(raw_item)
     elig = parsed.get("eligibility", {})
     assert "eligible_nationalities" not in elig
-    assert elig.get("eligibility_text") == "يجب أن يكون المتقدم حاصلاً على شهادة الثانوية العامة بمعدل جيد جداً."
+    assert (
+        elig.get("eligibility_text")
+        == "يجب أن يكون المتقدم حاصلاً على شهادة الثانوية العامة بمعدل جيد جداً."
+    )
 
 
 def test_almin7_non_turkish_wording_leaves_nationalities_empty():
     """Non-Turkish wording must NOT produce Arab nationalities or any invented list."""
     adapter = Almin7Adapter()
     generic_27 = [
-        "إريتريا", "الأردن", "الإمارات", "البحرين", "الجزائر", "السعودية", "السودان",
-        "الصومال", "العراق", "الكويت", "المغرب", "النيجر", "اليمن", "تشاد", "تونس",
-        "جزر القمر", "جنوب السودان", "جيبوتي", "سوريا", "عُمان", "فلسطين", "قطر",
-        "لبنان", "ليبيا", "مالي", "مصر", "موريتانيا",
+        "إريتريا",
+        "الأردن",
+        "الإمارات",
+        "البحرين",
+        "الجزائر",
+        "السعودية",
+        "السودان",
+        "الصومال",
+        "العراق",
+        "الكويت",
+        "المغرب",
+        "النيجر",
+        "اليمن",
+        "تشاد",
+        "تونس",
+        "جزر القمر",
+        "جنوب السودان",
+        "جيبوتي",
+        "سوريا",
+        "عُمان",
+        "فلسطين",
+        "قطر",
+        "لبنان",
+        "ليبيا",
+        "مالي",
+        "مصر",
+        "موريتانيا",
     ]
     raw_item = {
         "title": "منحة جامعة إرجييس في تركيا",
@@ -367,7 +416,10 @@ def test_almin7_non_turkish_wording_leaves_nationalities_empty():
     parsed = adapter.parse(raw_item)
     elig = parsed.get("eligibility", {})
     assert "eligible_nationalities" not in elig
-    assert elig.get("eligibility_text") == "أن تكون من جنسية غير تركية. تقديم شهادة الثانوية العامة."
+    assert (
+        elig.get("eligibility_text")
+        == "أن تكون من جنسية غير تركية. تقديم شهادة الثانوية العامة."
+    )
 
 
 def test_almin7_broad_all_nationalities_leaves_nationalities_empty():
@@ -384,7 +436,10 @@ def test_almin7_broad_all_nationalities_leaves_nationalities_empty():
     parsed = adapter.parse(raw_item)
     elig = parsed.get("eligibility", {})
     assert "eligible_nationalities" not in elig
-    assert elig.get("eligibility_text") == "المنحة متاحة لجميع الجنسيات من كافة أنحاء العالم."
+    assert (
+        elig.get("eligibility_text")
+        == "المنحة متاحة لجميع الجنسيات من كافة أنحاء العالم."
+    )
 
 
 def test_almin7_specific_single_nationality_preserved():
@@ -401,7 +456,10 @@ def test_almin7_specific_single_nationality_preserved():
     parsed = adapter.parse(raw_item)
     elig = parsed.get("eligibility", {})
     assert elig.get("eligible_nationalities") == ["السعودية"]
-    assert elig.get("eligibility_text") == "المنحة مخصصة للطلاب السعوديين فقط والحصول على معدل تراكمي 3.5."
+    assert (
+        elig.get("eligibility_text")
+        == "المنحة مخصصة للطلاب السعوديين فقط والحصول على معدل تراكمي 3.5."
+    )
 
 
 def test_almin7_detail_html_parsing_rejects_generic_pills():
@@ -446,5 +504,8 @@ def test_almin7_detail_html_parsing_rejects_generic_pills():
     """
     detail = adapter._parse_detail_html(html)
     assert detail.get("eligible_nationalities") == []
-    assert detail.get("eligibility_text") == "الحصول على شهادة الثانوية العامة بمعدل جيد جداً وإتقان اللغة الإنجليزية."
+    assert (
+        detail.get("eligibility_text")
+        == "الحصول على شهادة الثانوية العامة بمعدل جيد جداً وإتقان اللغة الإنجليزية."
+    )
     assert detail.get("country") == "رومانيا"

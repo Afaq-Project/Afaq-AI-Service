@@ -538,7 +538,9 @@ class Almin7Adapter(BaseAdapter):
         re.compile(
             r"(?i)\b(all\s+nationalities|any\s+nationality|international\s+students|all\s+countries)\b"
         ),
-        re.compile(r"(?i)(?:الطلاب\s+الدوليين|للطلاب\s+الدوليين|طالب[اً]?\s+دولي[اً]?)"),
+        re.compile(
+            r"(?i)(?:الطلاب\s+الدوليين|للطلاب\s+الدوليين|طالب[اً]?\s+دولي[اً]?)"
+        ),
         re.compile(
             r"(?i)(?:الطلاب\s+العرب|للطلاب\s+العرب|الدول\s+العربية|العالم\s+العربي|الوطن\s+العربي|جامعة\s+الدول\s+العربية)"
         ),
@@ -632,9 +634,7 @@ class Almin7Adapter(BaseAdapter):
         has_exclusion = any(
             p.search(text) for p in self.EXCLUSIONARY_NATIONALITY_PATTERNS
         )
-        has_broad = any(
-            p.search(text) for p in self.BROAD_OR_ALL_NATIONALITY_PATTERNS
-        )
+        has_broad = any(p.search(text) for p in self.BROAD_OR_ALL_NATIONALITY_PATTERNS)
 
         nats_list = raw_nationalities if isinstance(raw_nationalities, list) else []
 
@@ -1050,7 +1050,9 @@ class Almin7Adapter(BaseAdapter):
         raw_nationalities = raw_item.get("eligible_nationalities")
         reliable_nationalities = self._filter_reliable_nationalities(
             raw_nationalities if isinstance(raw_nationalities, list) else None,
-            eligibility_text=eligibility_text if isinstance(eligibility_text, str) else None,
+            eligibility_text=(
+                eligibility_text if isinstance(eligibility_text, str) else None
+            ),
             title=title,
         )
 
