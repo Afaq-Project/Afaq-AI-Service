@@ -140,6 +140,89 @@ Receives scrape completion notifications (used for internal verification and Mai
 
 ---
 
+### 3.4 AI Assistant Chat
+Answers a student's question about one opportunity, using only the stored opportunity data and the profile sent with the request. Conversations are stored per user, opportunity and (optionally) application.
+
+* **URL:** `/api/v1/ai/chat`
+* **Method:** `POST`
+* **Auth Required:** Yes (`X-API-Key`)
+* **Request Body:**
+  ```json
+  {
+    "user_id": "3f1c2b4e-8d5a-4c7e-9b1f-2a6d8e0c4b7a",
+    "opportunity_id": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+    "application_id": null,
+    "message": "هل يشترطون شهادة IELTS؟",
+    "locale": "ar",
+    "profile": {
+      "nationality": "Syria",
+      "education_level": "Bachelor",
+      "field_of_study": "Computer Science",
+      "gpa": 3.4,
+      "languages": [{"name": "English", "level": "B2"}]
+    }
+  }
+  ```
+* **Response `200 OK`:**
+  ```json
+  {
+    "conversation_id": "c9d1...",
+    "message_id": "m7a2...",
+    "answer": "...",
+    "status": "ok",
+    "decline_reason": null,
+    "official_source_url": "https://www.chevening.org/apply",
+    "disclaimer": "هذا التوجيه مقدم للمساعدة فقط ولا يضمن قبول طلبك أو أي نتيجة.",
+    "created_at": "2026-09-15T10:00:00Z"
+  }
+  ```
+* `status` is `declined` when the assistant will not answer. `decline_reason` is one of:
+  * `missing_eligibility_data` / `unverified_opportunity`: eligibility question without reliable data (answered without calling the model).
+  * `insufficient_data`: the model found no answer in the stored data.
+  * `guardrail_blocked`: the message was blocked (prompt injection).
+
+  In every declined case `answer` points the student to `official_source_url`.
+
+### 3.5 Essay Review
+* **URL:** `/api/v1/ai/essay-review`
+* **Method:** `POST`
+* **Auth Required:** Yes (`X-API-Key`)
+* **Request Body:**
+  ```json
+  {
+    "user_id": "3f1c2b4e-8d5a-4c7e-9b1f-2a6d8e0c4b7a",
+    "essay_type": "motivation_letter",
+    "essay_text": "...",
+    "opportunity_id": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+    "locale": "en"
+  }
+  ```
+  `essay_type`: `motivation_letter`, `personal_statement`, `cv`, `research_proposal`, `other`. `essay_text`: 100 to 20,000 characters.
+* **Response `200 OK`:** `overall_assessment`, `strengths[]`, `weaknesses[]` (each `{point, evidence}`, where `evidence` is an exact quote from the essay or `null`), `suggestions[]` (`{suggestion, priority}`), `language_issues[]` (`{original, correction, explanation}`), `fit_with_opportunity`, `disclaimer`.
+
+### 3.6 Conversation History
+* **URL:** `/api/v1/ai/conversations?user_id=...&opportunity_id=...&application_id=...&limit=50&before=<ISO datetime>`
+* **Method:** `GET`
+* **Auth Required:** Yes (`X-API-Key`)
+* **Response `200 OK`:** `{"conversation_id": "...", "messages": [{"id", "role", "content", "status", "created_at"}], "has_more": false}`. Messages are oldest first; pass the first message's `created_at` as `before` to load older ones.
+
+### 3.7 AI Error Responses
+```json
+{ "error": { "code": "ai_unavailable", "message": "المساعد غير متاح حالياً. حاول مرة أخرى لاحقاً." } }
+```
+| Status | Code | When |
+| --- | --- | --- |
+| 404 | `opportunity_not_found` | Unknown `opportunity_id` |
+| 422 | `ai_refused` | The model declined to process the input |
+| 429 | `ai_busy` | Rate limited by the model provider |
+| 502 | `ai_incomplete` | The model returned no usable output |
+| 503 | `ai_unavailable` | Provider unreachable or failing |
+| 504 | `ai_timeout` | The model call timed out (`AI_TIMEOUT_SECONDS`) |
+
+The user's message is saved even when the model call fails, so no input is lost.
+
+---
+
 ## 4. Webhook Notification (Python Service → Main Service)
 
 When a batch scrape completes, the Python Service dispatches a webhook to the Main Service URL specified in `MAIN_SERVICE_WEBHOOK_URL`.
