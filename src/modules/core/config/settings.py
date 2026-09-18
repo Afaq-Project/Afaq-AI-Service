@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     )
 
     database_url: str = ""
+    profile_api_database_url: str = ""
     environment: str = "development"
     log_level: str = "INFO"
 

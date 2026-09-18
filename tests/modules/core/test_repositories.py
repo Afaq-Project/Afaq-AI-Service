@@ -13,6 +13,7 @@ class FakeTable:
         self.records = records or []
         self.created = []
         self.updated = []
+        self.find_many_calls = []
 
     async def create(self, data):
         record = SimpleNamespace(id=f"rec-{len(self.created)}", **data)
@@ -24,6 +25,7 @@ class FakeTable:
         return SimpleNamespace(id=where["id"], **data)
 
     async def find_many(self, where=None):
+        self.find_many_calls.append(where)
         if where and "id" in where:
             wanted = set(where["id"]["in"])
             return [r for r in self.records if r.id in wanted]
@@ -113,6 +115,46 @@ class TestOpportunityRepository:
     async def test_exists_by_content_hash_false(self):
         repo = OpportunityRepository(FakeDb(cleaned=[]))
         assert await repo.exists_by_content_hash("nothing") is False
+
+    async def test_find_within_visibility_window_queries_cutoff_date(self):
+        from datetime import UTC, datetime, timedelta
+
+        db = FakeDb(cleaned=[])
+        repo = OpportunityRepository(db)
+        fixed_now = datetime(2026, 9, 15, 12, 0, 0, tzinfo=UTC)
+
+        await repo.find_within_visibility_window(
+            now=fixed_now, retention_days=30, include_null_deadlines=True
+        )
+
+        assert len(db.cleanedopportunity.find_many_calls) == 1
+        where = db.cleanedopportunity.find_many_calls[0]
+        assert "OR" in where
+        cutoff_date = fixed_now.date() - timedelta(days=30)
+        expected_cutoff = datetime.combine(cutoff_date, datetime.min.time()).replace(
+            tzinfo=UTC
+        )
+        assert where["OR"][0] == {"deadline": {"gte": expected_cutoff}}
+        assert where["OR"][1] == {"deadline": None}
+
+    async def test_find_within_visibility_window_excludes_null_when_requested(self):
+        from datetime import UTC, datetime, timedelta
+
+        db = FakeDb(cleaned=[])
+        repo = OpportunityRepository(db)
+        fixed_now = datetime(2026, 9, 15, 12, 0, 0, tzinfo=UTC)
+
+        await repo.find_within_visibility_window(
+            now=fixed_now, retention_days=30, include_null_deadlines=False
+        )
+
+        assert len(db.cleanedopportunity.find_many_calls) == 1
+        where = db.cleanedopportunity.find_many_calls[0]
+        cutoff_date = fixed_now.date() - timedelta(days=30)
+        expected_cutoff = datetime.combine(cutoff_date, datetime.min.time()).replace(
+            tzinfo=UTC
+        )
+        assert where == {"deadline": {"gte": expected_cutoff}}
 
 
 class TestSourceRepository:
