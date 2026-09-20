@@ -383,7 +383,7 @@ class Scholars4DevAdapter(BaseAdapter):
         fields_of_study = self._extract_fields_of_study(content)
 
         # Funding type
-        funding_type = self._extract_funding_type(content)
+        funding_type = self._extract_funding_type(full_text)
 
         # Deadline
         deadline = self._extract_deadline(full_text)
@@ -486,51 +486,105 @@ class Scholars4DevAdapter(BaseAdapter):
 
         text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
 
-        if (
-            re.search(
-                r"(?i)\btuition\b",
+        # 1. Unfunded / self-funded
+        if re.search(
+            r"(?i)\b(unfunded|self[ -]?funded|no financial support|non[ -]?funded)\b",
+            text,
+        ):
+            return "unfunded"
+
+        # 2. Check for explicit statement that tuition is NOT covered (Partial funding)
+        if re.search(
+            r"(?i)\b(does not cover tuition|not cover tuition|tuition is not included|exempt from.*?except)\b",
+            text,
+        ):
+            if re.search(
+                r"(?i)\b(living|stipend|allowance|grant|chf|eur|usd|gbp|\$|€|£)\b",
                 text,
-            )
-            and re.search(
-                r"(?i)\b(airfare|travel)\b",
-                text,
-            )
-            and re.search(
-                r"(?i)\b(living stipend|stipend|living allowance|grant for living costs)\b",
-                text,
-            )
+            ):
+                return "partially_funded"
+
+        # 3. Comprehensive / Full funding patterns
+        # A. Explicit full keywords
+        if re.search(
+            r"(?i)\b(fully[ -]?funded|full[ -]?funding|full[- ]cost|full tuition|100%[ -]?tuition|100%[ -]?funded|comprehensive scholarship|full scholarship|full scholarships)\b",
+            text,
         ):
             return "fully_funded"
 
         if re.search(
-            r"(?i)\b(fully[ -]?funded|full[- ]cost|full tuition|comprehensive scholarship|full scholarship|full scholarships)\b",
+            r"(?i)\b(tuition and college fees in full|all university and college fees|full payment of your academic fees)\b",
             text,
         ):
             return "fully_funded"
-        if re.search(
-            r"(?i)\btuition and college fees in full\b",
-            text,
-        ):
+
+        # B. Tuition + Living Support combinations
+        has_tuition = bool(
+            re.search(
+                r"(?i)\b(tuition|academic fees|college fees|course fees|associated fees|tuition fee waiver|tuition waiver)\b",
+                text,
+            )
+        )
+        has_living = bool(
+            re.search(
+                r"(?i)\b(living stipend|living allowance|living expenses|subsistence allowance|maintenance stipend|monthly stipend|monthly allowance|monthly payments|grant for living|residence support|accommodation|room and board|study expenses|stipends?)\b",
+                text,
+            )
+        )
+        has_travel = bool(
+            re.search(
+                r"(?i)\b(airfare|air fare|travel allowance|flight allowance|return flights?|travel expenses|flights?)\b",
+                text,
+            )
+        )
+
+        if has_tuition and has_living:
             return "fully_funded"
-        if re.search(
-            r"(?i)\bfull payment of your academic fees\b",
-            text,
-        ) and re.search(
-            r"(?i)\bmaintenance stipend\b",
-            text,
+
+        if (
+            has_living
+            and has_travel
+            and bool(re.search(r"(?i)\b(insurance|settlement allowance)\b", text))
         ):
+            # e.g., DAAD, KOICA
             return "fully_funded"
+
+        # 4. Explicit Partial funding patterns
         if re.search(
-            r"(?i)\b(partially[ -]?funded|partial funding|tuition fee waiver)\b",
+            r"(?i)\b(partially[ -]?funded|partial funding|partial scholarship|tuition[ -]?waiver|tuition[ -]?discount|tuition[ -]?reduction|tuition[ -]?deduction|partial tuition)\b",
             text,
         ):
             return "partially_funded"
 
+        # Covers tuition fee only (without living costs)
         if re.search(
-            r"(?i)\b(unfunded|self[ -]?funded)\b",
+            r"(?i)\b(?:covers|cover|pays?)\s+(?:the\s+)?tuition\s+fees?\b",
+            text,
+        ) and not has_living:
+            return "partially_funded"
+
+        # Specific grant amounts without full coverage (e.g., £15,000 annual grant, CHF 10'000 per semester, $5,000–$10,000 per year, Up to $40,000, Fellowship: $20,000)
+        if (
+            re.search(
+                r"(?i)\b(?:grant of|grant:|stipend of|stipends?:|valued at|ranges from|award of|award:|total\s+value|scholarship\s+value|fellowship:|up\s+to|allowance of|scholarship covers|includes|amounts to)\s*(?:[£$€¥￥]|CHF|EUR|USD|GBP|JPY|AUD|CAD)\s*[\d,',’]+",
+                text,
+            )
+            or re.search(
+                r"(?i)\b(?:receive|provides?|fellowship|stipend|grant|allowance|award)\s+(?:a\s+)?(?:[£$€¥￥]|CHF|EUR|USD|GBP|JPY|AUD|CAD)\s*[\d,',’]+(?:\s*[-–]\s*(?:[£$€¥￥]|CHF|EUR|USD|GBP|JPY|AUD|CAD)?\s*[\d,',’]+)?\s*(?:per (?:year|annum|semester|month)|annual(?:ly)?|a year|each year|per academic year)?",
+                text,
+            )
+            or re.search(
+                r"(?i)(?:[£$€¥￥]|CHF|EUR|USD|GBP|JPY|AUD|CAD)\s*[\d,',’]+(?:\s*[-–]\s*(?:[£$€¥￥]|CHF|EUR|USD|GBP|JPY|AUD|CAD)?\s*[\d,',’]+)?\s*(?:per (?:year|annum|semester|month)|annual(?:ly)?|a year|each year|per academic year)\s+(?:grant|stipend|allowance|scholarship|award|fellowship)",
+                text,
+            )
+        ):
+            return "partially_funded"
+
+        if re.search(
+            r"(?i)\b(covers \d+(?:\.\d+)?-\d+(?:\.\d+)? (?:undergraduate|graduate)?\s*units)\b",
             text,
         ):
-            return "unfunded"
+            return "partially_funded"
 
         return None
 

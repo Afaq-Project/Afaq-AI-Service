@@ -8,13 +8,13 @@ logger = logging.getLogger(__name__)
 FUNDING_MAPPINGS = [
     (
         re.compile(
-            r"(?i)\b(fully[ -]?funded|full[ -]?funding|full[ -]?scholarship|full[ -]?tuition|100%[ -]?funded|ممول[ -]?بالكامل|تمويل[ -]?كامل)\b"
+            r"(?i)\b(fully[ -]?funded|full[ -]?funding|full[ -]?scholarship|full[ -]?tuition|100%[ -]?funded|100%[ -]?tuition|ممول[ -]?بالكامل|تمويل[ -]?كامل)\b"
         ),
         "fully_funded",
     ),
     (
         re.compile(
-            r"(?i)\b(partially[ -]?funded|partial[ -]?funding|tuition[ -]?(?:fee|waiver)|ممول[ -]?جزئيا|تمويل[ -]?جزئي|خصم|تخفيض)\b"
+            r"(?i)\b(partially[ -]?funded|partial[ -]?funding|partial[ -]?scholarship|tuition[ -]?(?:fee[ -]?)?(?:waiver|discount|reduction|deduction)|ممول[ -]?جزئيا|تمويل[ -]?جزئي|خصم|تخفيض)\b"
         ),
         "partially_funded",
     ),

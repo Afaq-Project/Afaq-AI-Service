@@ -241,21 +241,53 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
         categories: list[str],
         content: str,
     ) -> str | None:
-        combined = f"{title} {' '.join(categories)} {content[:1200]}"
+        combined = f"{title} {' '.join(categories)} {content[:1500]}"
 
+        # 1. Partial funding indicators (e.g. partially funded, tuition waiver/discount/deduction, % tuition)
         if re.search(
-            r"(?i)\b(fully[ -]?funded|full[ -]?funded|full funding|full scholarship|full tuition|100%[ -]?funded)\b",
+            r"(?i)\b(partially[ -]?funded|partial funding|partial scholarship|tuition\s*(?:fee)?\s*(?:waiver|discount|reduction|deduction)|partial tuition)\b",
             combined,
-        ):
-            return "fully_funded"
-
-        if re.search(
-            r"(?i)\b(partially[ -]?funded|partial funding|partial scholarship|tuition waiver|tuition discount)\b",
+        ) or re.search(
+            r"(?i)\b(?:up to\s*)?\d{1,2}%\s*(?:of\s*(?:the\s*)?)?(?:tuition|mba tuition|fees?)\b",
             combined,
         ):
             return "partially_funded"
 
-        if re.search(r"(?i)\b(unfunded|self[ -]?funded)\b", combined):
+        # Specific grant amounts or partial coverage (e.g. £15,000 annual grant, ¥70,000 per month, reimbursement up to specific limit)
+        if (
+            re.search(
+                r"(?i)\b(?:grant of|grant:|stipend of|stipends?:|valued at|ranges from|award of|award:|total\s+value|scholarship\s+value|fellowship:|up\s+to|allowance of|scholarship covers|includes|amounts to|receive)\s*(?:[£$€¥￥]|CHF|EUR|USD|GBP|JPY|AUD|CAD)?\s*[\d,',’]+",
+                combined,
+            )
+            or re.search(
+                r"(?i)(?:[£$€¥￥]|CHF|EUR|USD|GBP|JPY|AUD|CAD)\s*[\d,',’]+\s*(?:annual grant|per year|per semester|per month)",
+                combined,
+            )
+            or re.search(
+                r"(?i)\b(?:reimbursement.*?academic fees.*?up to a specific limit)\b",
+                combined,
+            )
+        ):
+            return "partially_funded"
+
+        # 2. Fully funded indicators
+        if re.search(
+            r"(?i)\b(fully[ -]?funded|full[ -]?funded|full funding|full scholarship|100% tuition|full tuition)\b",
+            combined,
+        ):
+            return "fully_funded"
+
+        # 3. Unfunded indicators
+        if (
+            re.search(
+                r"(?i)\b(unfunded position|unfunded program|unfunded opportunity|no financial support|non[ -]?funded)\b",
+                combined,
+            )
+            or re.search(
+                r"(?i)\b(?:opportunity|program|scholarship|position|fellowship|internship)\s+is\s+(?:unfunded|self[ -]?funded)\b",
+                combined,
+            )
+        ):
             return "unfunded"
 
         return None
