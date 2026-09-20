@@ -203,6 +203,16 @@ class WordPressApiAdapter(BaseAdapter):
                     ):
                         category_names.append(term["name"])
 
+        # 8. Resolve fields_of_study (only if explicitly specified in field_mapping)
+        fos_path = self.field_mapping.get("fields_of_study")
+        fields_of_study: list[str] = []
+        if fos_path:
+            fos_val = get_nested_field(raw_item, fos_path)
+            if isinstance(fos_val, list):
+                fields_of_study = [str(x).strip() for x in fos_val if str(x).strip()]
+            elif isinstance(fos_val, str) and fos_val.strip():
+                fields_of_study = [fos_val.strip()]
+
         return {
             "title": title_rendered,
             "description": description,
@@ -210,6 +220,6 @@ class WordPressApiAdapter(BaseAdapter):
             "source_url": source_url,
             "published_at": published_at,
             "categories": category_names,
-            "fields_of_study": category_names,
+            "fields_of_study": fields_of_study,
             "raw_payload": raw_item,
         }
