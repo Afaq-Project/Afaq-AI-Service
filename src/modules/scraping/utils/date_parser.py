@@ -104,9 +104,7 @@ EXACT_DATE_PATTERNS = [
         rf"(?i)\b((?:{MONTH_NAMES_LIST})\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{4}})\b"
     ),
     # 3. Numeric ISO or Slash/Dash with Day, Month, Year
-    re.compile(
-        r"\b(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4})\b"
-    ),
+    re.compile(r"\b(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4})\b"),
 ]
 
 
@@ -174,12 +172,10 @@ def _parse_single_exact_date(date_str: str) -> datetime | None:
     if not re.search(r"\b([1-9]|[12]\d|3[01])(?:st|nd|rd|th)?\b", cleaned):
         return None
 
-
     norm = _normalize_arabic_dates(cleaned)
     # Remove ordinal suffixes (1st, 2nd, 3rd, 4th, etc.)
     norm = re.sub(r"(\d+)(st|nd|rd|th)", r"\1", norm)
     norm = re.sub(r"\s+", " ", norm).strip()
-
 
     # 1. Try explicit COMMON_DATE_FORMATS
     for fmt in COMMON_DATE_FORMATS:

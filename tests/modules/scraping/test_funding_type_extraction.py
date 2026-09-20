@@ -184,7 +184,11 @@ class TestFundingTypeExtraction:
             ("unfunded", "", "unfunded"),
             ("self funded", "", "unfunded"),
             ("غير ممول", "", "unfunded"),
-            (None, "This opportunity is fully funded for all candidates.", "fully_funded"),
+            (
+                None,
+                "This opportunity is fully funded for all candidates.",
+                "fully_funded",
+            ),
             (None, "Provides partial funding for tuition costs.", "partially_funded"),
             (None, "Self-funded position with no stipend.", "unfunded"),
             (None, "Please check application guidelines.", None),

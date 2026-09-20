@@ -557,10 +557,13 @@ class Scholars4DevAdapter(BaseAdapter):
             return "partially_funded"
 
         # Covers tuition fee only (without living costs)
-        if re.search(
-            r"(?i)\b(?:covers|cover|pays?)\s+(?:the\s+)?tuition\s+fees?\b",
-            text,
-        ) and not has_living:
+        if (
+            re.search(
+                r"(?i)\b(?:covers|cover|pays?)\s+(?:the\s+)?tuition\s+fees?\b",
+                text,
+            )
+            and not has_living
+        ):
             return "partially_funded"
 
         # Specific grant amounts without full coverage (e.g., £15,000 annual grant, CHF 10'000 per semester, $5,000–$10,000 per year, Up to $40,000, Fellowship: $20,000)

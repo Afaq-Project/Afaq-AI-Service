@@ -278,15 +278,12 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
             return "fully_funded"
 
         # 3. Unfunded indicators
-        if (
-            re.search(
-                r"(?i)\b(unfunded position|unfunded program|unfunded opportunity|no financial support|non[ -]?funded)\b",
-                combined,
-            )
-            or re.search(
-                r"(?i)\b(?:opportunity|program|scholarship|position|fellowship|internship)\s+is\s+(?:unfunded|self[ -]?funded)\b",
-                combined,
-            )
+        if re.search(
+            r"(?i)\b(unfunded position|unfunded program|unfunded opportunity|no financial support|non[ -]?funded)\b",
+            combined,
+        ) or re.search(
+            r"(?i)\b(?:opportunity|program|scholarship|position|fellowship|internship)\s+is\s+(?:unfunded|self[ -]?funded)\b",
+            combined,
         ):
             return "unfunded"
 
@@ -362,7 +359,6 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
                 ):
                     return candidate
         return None
-
 
     def _extract_organization(self, title: str, content: str) -> str | None:
         """

@@ -200,4 +200,3 @@ class TestCleaningServiceExactDeadlineIntegration:
         assert dt.year == 2026
         assert dt.month == 1
         assert dt.day == 15
-
