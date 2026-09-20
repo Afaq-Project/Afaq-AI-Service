@@ -312,11 +312,11 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
         """
         patterns = [
             re.compile(
-                r"(?:application\s+deadline|deadline|last\s+date\s+to\s+apply|last\s+date|due\s+date|applications?\s+close(?:\s+on)?|closing\s+date|closes\s+on|apply\s+by|apply\s+before)[:\s]+([^\n\.,;,<]{5,50})",
+                r"(?:application\s+deadlines?|deadlines?|last\s+date\s+to\s+apply|last\s+date|due\s+date|applications?\s+close(?:\s+on)?|closing\s+date|closes\s+on|apply\s+by|apply\s+before)[:\s]+([^\n\.;<]{5,80})",
                 re.IGNORECASE,
             ),
             re.compile(
-                r"(?:submit(?:ting|s)?(?:\s+your)?\s+application(?:s)?\s+(?:by|before|no\s+later\s+than))[:\s]+([^\n\.,;,<]{5,50})",
+                r"(?:submit(?:ting|s)?(?:\s+your)?\s+application(?:s)?\s+(?:by|before|no\s+later\s+than))[:\s]+([^\n\.;<]{5,80})",
                 re.IGNORECASE,
             ),
         ]
@@ -325,11 +325,12 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
             if match:
                 candidate = match.group(1).strip()
                 # Reject candidates that are clearly not dates (too vague or too long)
-                if len(candidate) <= 50 and any(
+                if len(candidate) <= 80 and any(
                     c.isdigit() or c.isalpha() for c in candidate
                 ):
                     return candidate
         return None
+
 
     def _extract_organization(self, title: str, content: str) -> str | None:
         """
