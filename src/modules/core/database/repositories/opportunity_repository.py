@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from prisma import Json, Prisma
@@ -74,3 +75,40 @@ class OpportunityRepository:
     async def count_cleaned_by_source(self, source_id: str) -> int:
         """يعدّ الفرص النظيفة لمصدر معيّن."""
         return await self._db.cleanedopportunity.count(where={"source_id": source_id})
+
+    async def find_within_visibility_window(
+        self,
+        now: date | datetime | None = None,
+        retention_days: int = 30,
+        include_null_deadlines: bool = True,
+    ) -> list[Any]:
+        """يسترجع الفرص النظيفة التي تقع ضمن نافذة الرؤية (المفتوحة + المغلقة خلال 30 يوماً).
+
+        تعتمد المقارنة على تاريخ اليوم بالتقويم (Date-Only).
+        تستثنى الفرص التي مر على موعدها النهائي أكثر من 30 يوماً.
+        لا تقوم هذه الدالة بتعديل أو تحديث أي سجلات في قاعدة البيانات (Read-Only).
+        """
+        if now is None:
+            current_date = datetime.now(UTC).date()
+        elif isinstance(now, datetime):
+            current_date = now.date()
+        else:
+            current_date = now
+
+        cutoff_date = current_date - timedelta(days=retention_days)
+        cutoff_dt = datetime.combine(cutoff_date, datetime.min.time()).replace(
+            tzinfo=UTC
+        )
+
+        where: dict[str, Any]
+        if include_null_deadlines:
+            where = {
+                "OR": [
+                    {"deadline": {"gte": cutoff_dt}},
+                    {"deadline": None},
+                ]
+            }
+        else:
+            where = {"deadline": {"gte": cutoff_dt}}
+
+        return await self._db.cleanedopportunity.find_many(where=where)  # type: ignore[arg-type]

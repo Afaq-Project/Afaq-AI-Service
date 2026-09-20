@@ -128,3 +128,46 @@ def test_grabscholarship_is_opportunity_filtering():
         "link": "https://grabscholarships.com/asu-mastercard-scholarship/",
     }
     assert adapter.is_opportunity(real_item) is True
+
+
+def test_grabscholarship_organization_extraction():
+    adapter = GrabScholarshipAdapter()
+
+    # Case 1: Organization in content label
+    item1 = {
+        "title": {"rendered": "Master Scholarship Program 2026"},
+        "content": {
+            "rendered": "<p>Host Institution: University of Cambridge</p><p>Fully funded.</p>"
+        },
+        "categories": ["Scholarships"],
+        "link": "https://grabscholarships.com/cambridge-scholarship/",
+    }
+    parsed1 = adapter.parse(item1)
+    assert parsed1["organization"] == "University of Cambridge"
+
+    # Case 2: Organization in title (University pattern)
+    item2 = {
+        "title": {
+            "rendered": "Harvard University Undergraduate Scholarship 2026 in USA"
+        },
+        "content": {"rendered": "<p>Fully funded study in USA.</p>"},
+        "categories": ["Scholarships"],
+        "link": "https://grabscholarships.com/harvard-scholarship/",
+    }
+    parsed2 = adapter.parse(item2)
+    assert parsed2["organization"] == "Harvard University"
+
+
+def test_grabscholarship_deadline_extraction():
+    adapter = GrabScholarshipAdapter()
+
+    item = {
+        "title": {"rendered": "DAAD Scholarship 2026"},
+        "content": {
+            "rendered": "<p>Application deadline: 15 October 2026. For all international candidates.</p>"
+        },
+        "categories": ["Scholarships"],
+        "link": "https://grabscholarships.com/daad-2026/",
+    }
+    parsed = adapter.parse(item)
+    assert parsed["deadline"] == "15 October 2026"

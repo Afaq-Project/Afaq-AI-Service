@@ -67,13 +67,13 @@ STUDY_LEVEL_PATTERNS = [
     (re.compile(r"(?i)\b(phd|ph\.d|doctorate|doctoral|دكتوراه|دكتوراة)\b"), "PhD"),
     (
         re.compile(
-            r"(?i)\b(master|masters|master's|msc|ma|mba|postgraduate|graduate|ماجستير)\b"
+            r"(?i)\b(master|masters|master's|msc|mba|postgraduate|graduate|ماجستير)\b"
         ),
         "Master",
     ),
     (
         re.compile(
-            r"(?i)\b(bachelor|bachelors|bachelor's|bsc|ba|bs|undergraduate|undergrad|بكالوريوس|جامعي)\b"
+            r"(?i)\b(bachelor|bachelors|bachelor's|bsc|undergraduate|undergrad|بكالوريوس|جامعي)\b"
         ),
         "Bachelor",
     ),
@@ -84,6 +84,7 @@ STUDY_LEVEL_PATTERNS = [
     (re.compile(r"(?i)\b(diploma|certificate|دبلوم|دبلومة|شهادة)\b"), "Diploma"),
     (re.compile(r"(?i)\b(high[ -]?school|secondary|ثانوية|مدرسة)\b"), "High School"),
 ]
+
 
 # Country name standardizations
 COUNTRY_MAPPINGS = {
