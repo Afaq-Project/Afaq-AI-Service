@@ -2,6 +2,8 @@ import logging
 import re
 from typing import Any
 
+from bs4 import BeautifulSoup
+
 from .wordpress_api_adapter import WordPressApiAdapter
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,8 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
 
         organization = self._extract_organization(title, content)
 
+        eligibility = self._extract_eligibility(content)
+
         return {
             **base_parsed,
             "opportunity_type": opportunity_type,
@@ -75,6 +79,7 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
             "location": country,
             "deadline": deadline,
             "organization": organization,
+            "eligibility": eligibility or {},
         }
 
     def is_opportunity(self, raw_item: dict[str, Any]) -> bool:
@@ -407,5 +412,93 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
                 candidate = match.group(1).strip()
                 if 3 <= len(candidate) <= 80:
                     return candidate
+
+        return None
+
+    def _extract_eligibility(self, content_html: str) -> dict[str, Any] | None:
+        """
+        يستخرج معايير وشروط الأهلية من محتوى المقال في GrabScholarships.
+        يبحث عن العناوين المخصصة (Eligibility Criteria / Requirements / Who can apply)
+        ويجمع عناصر القوائم والفقرات حتى الوصول إلى حد التوقف (العنوان التالي غير المرتبط).
+        """
+        if not content_html or not isinstance(content_html, str):
+            return None
+
+        soup = BeautifulSoup(content_html, "html.parser")
+
+        heading_pattern = re.compile(
+            r"(?i)\b(eligibility\s+criteria|eligibility\s+requirements|eligibility|who\s+can\s+apply|who\s+is\s+eligible|entry\s+requirements|general\s+requirements|selection\s+criteria)\b"
+        )
+        stop_pattern = re.compile(
+            r"(?i)\b(how\s+to\s+apply|application\s+process|application\s+procedure|benefits|financial\s+coverage|scholarship\s+benefits|financial\s+benefits|required\s+documents|documents\s+required|application\s+deadline|deadlines?|important\s+dates|selection\s+process|faq|why\s+choose|apply\s+now|official\s+link|ineligibility\s+criteria)\b"
+        )
+
+        candidate_blocks: list[str] = []
+
+        # 1. Primary strategy: Find explicit heading (h1-h6)
+        for h in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+            h_text = h.get_text(" ", strip=True)
+            if heading_pattern.search(h_text) and not stop_pattern.search(h_text):
+                curr = h.find_next_sibling()
+                while curr:
+                    if curr.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
+                        curr_text = curr.get_text(" ", strip=True)
+                        if stop_pattern.search(curr_text):
+                            break
+                        if re.search(
+                            r"(?i)\b(academic|admission|residency|language|general|criteria|requirements)\b",
+                            curr_text,
+                        ):
+                            candidate_blocks.append(f"{curr_text}:")
+                            curr = curr.find_next_sibling()
+                            continue
+                        break
+
+                    if curr.name in ["ul", "ol"]:
+                        for li in curr.find_all("li", recursive=False):
+                            li_text = li.get_text(" ", strip=True)
+                            if li_text:
+                                candidate_blocks.append(f"• {li_text}")
+                    elif curr.name in ["p", "div"]:
+                        p_text = curr.get_text(" ", strip=True)
+                        if p_text and not re.search(
+                            r"(?i)\b(apply\s+also|read\s+also|share\s+this|click\s+here)\b",
+                            p_text,
+                        ):
+                            candidate_blocks.append(p_text)
+
+                    curr = curr.find_next_sibling()
+
+                if candidate_blocks:
+                    break
+
+        # 2. Fallback strategy: Look for strong/b labeled paragraph
+        if not candidate_blocks:
+            for strong in soup.find_all(["strong", "b"]):
+                st_text = strong.get_text(" ", strip=True)
+                normalized_label = re.sub(r"[:：]\s*$", "", st_text).strip()
+                if heading_pattern.fullmatch(normalized_label):
+                    parent = strong.find_parent(["p", "div", "li"])
+                    if parent:
+                        parent_text = parent.get_text(" ", strip=True)
+                        candidate_blocks.append(parent_text)
+                        sib = parent.find_next_sibling()
+                        if sib and sib.name in ["ul", "ol"]:
+                            for li in sib.find_all("li", recursive=False):
+                                li_text = li.get_text(" ", strip=True)
+                                if li_text:
+                                    candidate_blocks.append(f"• {li_text}")
+                        elif sib and sib.name in ["p", "div"]:
+                            sib_text = sib.get_text(" ", strip=True)
+                            if sib_text and not stop_pattern.search(sib_text):
+                                candidate_blocks.append(sib_text)
+                    if candidate_blocks:
+                        break
+
+        if candidate_blocks:
+            full_text = "\n".join(candidate_blocks).strip()
+            full_text = re.sub(r"\n{3,}", "\n\n", full_text)
+            if len(full_text) >= 15:
+                return {"eligibility_text": full_text}
 
         return None

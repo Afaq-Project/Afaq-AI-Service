@@ -394,6 +394,9 @@ class Scholars4DevAdapter(BaseAdapter):
         # Organization / Host Institution
         organization = self._extract_organization(full_text)
 
+        # Eligibility
+        eligibility = self._extract_eligibility(content)
+
         return {
             "title": title,
             "description": summary or content,
@@ -407,6 +410,7 @@ class Scholars4DevAdapter(BaseAdapter):
             "country": country,
             "location": country,
             "organization": organization,
+            "eligibility": eligibility or {},
             "raw_payload": raw_item,
         }
 
@@ -709,5 +713,115 @@ class Scholars4DevAdapter(BaseAdapter):
 
         if section:
             return section.strip()
+
+        return None
+
+    def _extract_eligibility(self, html: str) -> dict[str, Any] | None:
+        """
+        يستخرج قسمي الفئة المستهدفة (Target group) وشروط الأهلية (Eligibility) من Scholars4Dev
+        ودمجهما في حقل نصي واحد متكامل eligibility_text.
+        """
+        if not html or not isinstance(html, str):
+            return None
+
+        soup = BeautifulSoup(html, "html.parser")
+
+        stop_label_pattern = re.compile(
+            r"(?i)\b(deadline|brief description|host institution|fields? of study|level|number of (?:awards|scholarships)|target group|scholarship (?:value|inclusions|benefits)|eligibility|application instructions|instructions|how to apply|website|disclaimer)\b"
+        )
+
+        def extract_section_text(patterns: list[str]) -> str | None:
+            for label in soup.find_all(["strong", "b"]):
+                label_text = label.get_text(" ", strip=True)
+                normalized_label = re.sub(r"[:：]\s*$", "", label_text).strip()
+
+                if not any(
+                    re.fullmatch(p, normalized_label, re.IGNORECASE) for p in patterns
+                ):
+                    continue
+
+                parent = label.find_parent(["p", "div"])
+                if not parent:
+                    continue
+
+                collected: list[str] = []
+
+                # Text within the parent paragraph after the label
+                parent_clone = BeautifulSoup(str(parent), "html.parser")
+                for s in parent_clone.find_all(["strong", "b"]):
+                    s.decompose()
+                inline_txt = parent_clone.get_text(" ", strip=True)
+                if inline_txt:
+                    collected.append(inline_txt)
+
+                # Iterate following siblings until next major section
+                sibling = parent.find_next_sibling()
+                while sibling:
+                    strong_child = sibling.find(["strong", "b"])
+                    if strong_child:
+                        child_label = re.sub(
+                            r"[:：]\s*$", "", strong_child.get_text(" ", strip=True)
+                        ).strip()
+                        if stop_label_pattern.search(child_label):
+                            break
+
+                    if sibling.name in ["ul", "ol"]:
+                        for li in sibling.find_all("li", recursive=False):
+                            li_txt = li.get_text(" ", strip=True)
+                            if li_txt:
+                                collected.append(f"• {li_txt}")
+                    elif sibling.name in ["p", "div"]:
+                        txt = sibling.get_text(" ", strip=True)
+                        if txt:
+                            collected.append(txt)
+
+                    sibling = sibling.find_next_sibling()
+
+                if collected:
+                    return "\n".join(collected).strip()
+
+            return None
+
+        # 1. Extract Target Group
+        target_group = extract_section_text(
+            [
+                r"Target\s+group(?:\(s\))?",
+                r"Target\s+groups?",
+                r"Eligible\s+Nationalit(?:y|ies)",
+                r"Eligible\s+Countr(?:y|ies)",
+            ]
+        )
+
+        # 2. Extract Eligibility Requirements
+        eligibility_reqs = extract_section_text(
+            [
+                r"Eligibility\s+Requirements?",
+                r"Eligibility\s+Criteria",
+                r"Eligibility",
+                r"Eligible\s+Applicants?",
+                r"Who\s+is\s+eligible",
+                r"Candidate\s+Requirements?",
+            ]
+        )
+
+        blocks: list[str] = []
+        if target_group and target_group.strip():
+            tg_clean = target_group.strip()
+            if not tg_clean.lower().startswith("target group"):
+                blocks.append(f"Target group: {tg_clean}")
+            else:
+                blocks.append(tg_clean)
+
+        if eligibility_reqs and eligibility_reqs.strip():
+            el_clean = eligibility_reqs.strip()
+            if not el_clean.lower().startswith("eligibility"):
+                blocks.append(f"Eligibility: {el_clean}")
+            else:
+                blocks.append(el_clean)
+
+        if blocks:
+            combined = "\n\n".join(blocks).strip()
+            if len(combined) >= 10:
+                return {"eligibility_text": combined}
 
         return None
