@@ -82,6 +82,12 @@ class TestExactDeadlineParserPositive:
                 15,
             ),
             (
+                "١٥ مايو ٢٠٢٦",
+                2026,
+                5,
+                15,
+            ),
+            (
                 "2026-10-31T23:59:59Z",
                 2026,
                 10,
@@ -200,3 +206,82 @@ class TestCleaningServiceExactDeadlineIntegration:
         assert dt.year == 2026
         assert dt.month == 1
         assert dt.day == 15
+
+    @pytest.mark.parametrize(
+        ("input_prose", "expected_year", "expected_month", "expected_day"),
+        [
+            (
+                "Application Deadline: January 10, 2026 (application-based scholarships) Language of Instruction: English",
+                2026,
+                1,
+                10,
+            ),
+            (
+                "Application Deadline: September 30, 2026 Fields of Study: Engineering, Health, Literature, and more",
+                2026,
+                9,
+                30,
+            ),
+            (
+                "Application Deadline: For graduates of Canada and the United States: September 25, 2026.",
+                2026,
+                9,
+                25,
+            ),
+            (
+                "Application Deadline: November 8, 2026 Apply also: MOFA Taiwan Fellowship 2026 (Fully Funded)",
+                2026,
+                11,
+                8,
+            ),
+            (
+                "Application Deadline: May 2, 2026 Benefits of the University of Padua Scholarship 2026 The scholarship provides",
+                2026,
+                5,
+                2,
+            ),
+            (
+                "Application Deadline February 14, 2026 To Apply, click here (Start Your Application here).",
+                2026,
+                2,
+                14,
+            ),
+            (
+                "Application Deadline: May 22, 2026 About the Community Engagement Exchange Program (CEE)",
+                2026,
+                5,
+                22,
+            ),
+            (
+                "Application Deadline: 30 April 2026 Application Mode: Online + submission of hard copies",
+                2026,
+                4,
+                30,
+            ),
+            (
+                "Deadline: 8 May 2026 Eligible Countries: Open to all nationalities Fields of Study",
+                2026,
+                5,
+                8,
+            ),
+            (
+                "Application Deadline: June 16, 2026 Eligible Applicants: International Students from All Countries",
+                2026,
+                6,
+                16,
+            ),
+        ],
+    )
+    def test_extract_deadline_from_text_grabscholarship_real_patterns(
+        self,
+        input_prose: str,
+        expected_year: int,
+        expected_month: int,
+        expected_day: int,
+    ) -> None:
+        dt = extract_deadline_from_text(input_prose)
+        assert dt is not None
+        assert dt.year == expected_year
+        assert dt.month == expected_month
+        assert dt.day == expected_day
+        assert dt.tzinfo == UTC

@@ -26,11 +26,11 @@ ARABIC_MONTHS = {
 # Explicit regex patterns to locate deadline section in text
 DEADLINE_PATTERNS = [
     re.compile(
-        r"(?:deadline|application deadline|the deadline is|due date|closes on|close on|closing date|closes|applications close on|last date to apply|last date)[:\s]+([^\n\.,;]+)",
+        r"(?:deadline|application deadline|the deadline is|due date|closes on|close on|closing date|closes|applications close on|last date to apply|last date)[:\s]+([^<\n\r;]+)",
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:آخر موعد للتقديم|آخر موعد|اخر موعد للتسجيل|الموعد النهائي|تاريخ انتهاء التقديم|تاريخ الإغلاق)[:\s]+([^\n\.,;]+)",
+        r"(?:آخر موعد للتقديم|آخر موعد|اخر موعد للتسجيل|الموعد النهائي|تاريخ انتهاء التقديم|تاريخ الإغلاق)[:\s]+([^<\n\r;]+)",
         re.IGNORECASE,
     ),
     re.compile(
@@ -108,9 +108,12 @@ EXACT_DATE_PATTERNS = [
 ]
 
 
+EASTERN_ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+
+
 def _normalize_arabic_dates(text: str) -> str:
     """يستبدل أسماء الأشهر العربية بالإنجليزية لتحليلها بسهولة."""
-    normalized = text
+    normalized = text.translate(EASTERN_ARABIC_DIGITS)
     for ar, en in ARABIC_MONTHS.items():
         normalized = re.sub(rf"\b{ar}\b", en, normalized)
     return normalized
@@ -140,7 +143,7 @@ def _find_exact_dates_in_text(text: str) -> list[str]:
 
 def _parse_single_exact_date(date_str: str) -> datetime | None:
     """يحاول تحويل نص تاريخ محدد ومفرد بدقة إلى datetime بتوقيت UTC."""
-    cleaned = str(date_str).strip()
+    cleaned = str(date_str).translate(EASTERN_ARABIC_DIGITS).strip()
     if not cleaned:
         return None
 
@@ -238,7 +241,7 @@ def parse_date(date_str: str | None) -> datetime | None:
             else date_str.replace(tzinfo=UTC)
         )
 
-    cleaned = str(date_str).strip()
+    cleaned = str(date_str).translate(EASTERN_ARABIC_DIGITS).strip()
     if not cleaned:
         return None
 
