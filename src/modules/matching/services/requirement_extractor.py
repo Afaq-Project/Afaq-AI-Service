@@ -96,6 +96,63 @@ NON_ACADEMIC_FIELD_TOKENS = {
 }
 
 
+# Nationality regex helpers
+_FOLLOWING_NATIONALITY_RESTRICTION_PATTERN = re.compile(
+    r"^(?:\s+from|\s+who\s+are|\s+of)\s+("
+    r"developing\s+countr"
+    r"|eligible\s+countr"
+    r"|selected\s+countr"
+    r"|participating\s+countr"
+    r"|partner\s+countr"
+    r"|oecd[- ]dac"
+    r"|dac\s+list"
+    r"|non[- ]eu"
+    r"|outside\s+the\s+eu"
+    r"|africa"
+    r"|asia"
+    r"|latin\s+america"
+    r"|commonwealth"
+    r"|[A-Z][a-z]+(?:\s*,\s*[A-Z][a-z]+)+"
+    r")",
+    re.IGNORECASE,
+)
+
+_TARGET_GROUP_PATTERN = re.compile(r"(?i)\btarget\s+group\s*:\s*([^\n\r]+)")
+
+_TARGET_GROUP_OPEN_PATTERN = re.compile(
+    r"(?i)^\s*("
+    r"all\s+applicants(?:\s+from\s+any\s+country)?"
+    r"|all\s+students(?:\s+including\s+international\s+students)?"
+    r"|national\s+and\s+international\s+students"
+    r"|international\s+and\s+eu\s+students"
+    r"|international\s+students\s*$"
+    r")\s*$"
+)
+
+_TARGET_GROUP_RESTRICTED_PATTERN = re.compile(
+    r"(?i)\b("
+    r"non[- ]eu(?:/eea(?:/efta)?)?"
+    r"|outside\s+the\s+eu(?:/eea)?"
+    r"|citizens?\s+from\s+non[- ]eu"
+    r"|women\s+who\s+are\s+not\s+(?:united\s+states|u\.?s\.?)\s+citizens"
+    r"|developing\s+countr(?:ies|y)"
+    r"|eligible\s+countries"
+    r"|dac\s+list"
+    r"|oecd[- ]dac"
+    r"|africa"
+    r"|commonwealth"
+    r")\b"
+)
+
+_TARGET_GROUP_DEFER_PATTERN = re.compile(
+    r"(?i)\b(?:from\s+(?:more\s+than\s+)?\d+\s+countries)\b"
+)
+
+_NEGATION_PREFIX_PATTERN = re.compile(
+    r"(?i)\b(?:not|non[- ]|are\s+not|aren't|excluding|except|other\s+than|neither|never|not\s+eligible\s+if(?:\s+you\s+are)?)\s*$"
+)
+
+
 def _clean_span(text: str, start: int, end: int, max_len: int = 160) -> str:
     """Extracts and cleans a readable snippet surrounding matched positions."""
     s = max(0, start - 20)
@@ -267,12 +324,140 @@ class RequirementExtractor:
                     )
                     return reqs
 
-        # Text-based extraction fallback
-        open_match = re.search(
-            r"(?i)\b(?:open\s+(?:for|to)\s+(?:all\s+)?(?:international\s+students|all\s+nationalities|all\s+countries|students\s+worldwide)|candidates\s+from\s+all\s+nations\s+eligible|(?:students\s+from\s+)?all\s+nationalities|all\s+countries\s+(?:of\s+the\s+world|are\s+eligible)|جميع\s+الجنسيات|كافة\s+الجنسيات|مفتوح\s+للجميع)\b",
-            full_text,
+        # 2. Check Target group section if present
+        tg_match = _TARGET_GROUP_PATTERN.search(full_text)
+        if tg_match:
+            tg_text = tg_match.group(1).strip()
+            tg_lower = tg_text.lower()
+
+            # Check if deferred (external count like "from 155 countries" or "from more than 180 countries")
+            if _TARGET_GROUP_DEFER_PATTERN.search(tg_text):
+                pass
+            # Check exclusion in target group (e.g. AU Emerging vs AAUW)
+            elif (
+                "who are not" in tg_lower
+                or "not u.s." in tg_lower
+                or "not united states" in tg_lower
+            ):
+                if "women who are not" in tg_lower:
+                    # AAUW explicit restriction for non-US women
+                    reqs.append(
+                        ExtractedRequirement(
+                            category="nationality",
+                            status=RequirementStatus.REQUIRED,
+                            requirement_type=RequirementType.ELIGIBILITY,
+                            scope=RequirementScope.SCHOLARSHIP,
+                            value={"description": tg_text[:100]},
+                            operator="IN",
+                            evidence=_clean_span(
+                                full_text, tg_match.start(), tg_match.end()
+                            ),
+                            confidence=ConfidenceLevel.HIGH,
+                            source_field="eligibility_text",
+                        )
+                    )
+                    return reqs
+                else:
+                    # AU Emerging exclusion -> cannot convert exclusion to positive requirement
+                    reqs.append(
+                        ExtractedRequirement(
+                            category="nationality",
+                            status=RequirementStatus.UNKNOWN,
+                            requirement_type=RequirementType.ELIGIBILITY,
+                            scope=RequirementScope.SCHOLARSHIP,
+                            evidence=_clean_span(
+                                full_text, tg_match.start(), tg_match.end()
+                            ),
+                            confidence=ConfidenceLevel.LOW,
+                            source_field="eligibility_text",
+                        )
+                    )
+                    return reqs
+            # Check if unrestricted open target group
+            elif _TARGET_GROUP_OPEN_PATTERN.match(tg_text):
+                reqs.append(
+                    ExtractedRequirement(
+                        category="nationality",
+                        status=RequirementStatus.NOT_REQUIRED,
+                        requirement_type=RequirementType.ELIGIBILITY,
+                        scope=RequirementScope.SCHOLARSHIP,
+                        value={"open_to_all": True},
+                        evidence=_clean_span(
+                            full_text, tg_match.start(), tg_match.end()
+                        ),
+                        confidence=ConfidenceLevel.HIGH,
+                        source_field="eligibility_text",
+                    )
+                )
+                return reqs
+            # Check if restricted target group
+            elif _TARGET_GROUP_RESTRICTED_PATTERN.search(tg_text):
+                reqs.append(
+                    ExtractedRequirement(
+                        category="nationality",
+                        status=RequirementStatus.REQUIRED,
+                        requirement_type=RequirementType.ELIGIBILITY,
+                        scope=RequirementScope.SCHOLARSHIP,
+                        value={"description": tg_text[:100]},
+                        operator="IN",
+                        evidence=_clean_span(
+                            full_text, tg_match.start(), tg_match.end()
+                        ),
+                        confidence=ConfidenceLevel.HIGH,
+                        source_field="eligibility_text",
+                    )
+                )
+                return reqs
+            elif (
+                ("," in tg_text or "•" in tg_text or ":" in tg_text)
+                and len(tg_text) > 30
+                and not tg_lower.startswith("all enrolled")
+                and not tg_lower.startswith("the scholarships are targeted")
+            ):
+                # Country list in Target group e.g. "Australia, Bermuda, Canada..." or "In Africa: Benin..." or "Afghanistan, Angola..."
+                reqs.append(
+                    ExtractedRequirement(
+                        category="nationality",
+                        status=RequirementStatus.REQUIRED,
+                        requirement_type=RequirementType.ELIGIBILITY,
+                        scope=RequirementScope.SCHOLARSHIP,
+                        value={"description": tg_text[:100]},
+                        operator="IN",
+                        evidence=_clean_span(
+                            full_text, tg_match.start(), tg_match.end()
+                        ),
+                        confidence=ConfidenceLevel.HIGH,
+                        source_field="eligibility_text",
+                    )
+                )
+                return reqs
+
+        # 3. Text-based extraction fallback (Open)
+        open_matches = list(
+            re.finditer(
+                r"(?i)\b(?:"
+                r"open\s+(?:for|to)\s+(?:all\s+)?(?:international\s+students|all\s+nationalities|all\s+countries|students\s+worldwide)"
+                r"|candidates\s+from\s+all\s+nations\s+eligible"
+                r"|(?:students\s+from\s+)?all\s+nationalities"
+                r"|all\s+countries\s+(?:of\s+the\s+world|are\s+eligible)"
+                r"|be\s+of\s+any\s+nationality"
+                r"|جميع\s+الجنسيات"
+                r"|كافة\s+الجنسيات"
+                r"|مفتوح\s+للجميع"
+                r")\b",
+                full_text,
+            )
         )
-        if open_match:
+
+        valid_open_match = None
+        for m in open_matches:
+            following_text = full_text[m.end() : m.end() + 60]
+            if _FOLLOWING_NATIONALITY_RESTRICTION_PATTERN.search(following_text):
+                continue
+            valid_open_match = m
+            break
+
+        if valid_open_match:
             reqs.append(
                 ExtractedRequirement(
                     category="nationality",
@@ -281,7 +466,7 @@ class RequirementExtractor:
                     scope=RequirementScope.SCHOLARSHIP,
                     value={"open_to_all": True},
                     evidence=_clean_span(
-                        full_text, open_match.start(), open_match.end()
+                        full_text, valid_open_match.start(), valid_open_match.end()
                     ),
                     confidence=ConfidenceLevel.HIGH,
                     source_field="description",
@@ -289,12 +474,30 @@ class RequirementExtractor:
             )
             return reqs
 
-        restr_match = re.search(
-            r"(?i)\b(?:citizens?\s+of\s+([A-Za-z\s,]+)|nationals?\s+of\s+([A-Za-z\s,]+)|مواطني\s+([\u0600-\u06FF\s،]+))\b",
-            full_text,
+        # 4. Text-based extraction fallback (Restricted)
+        restr_matches = list(
+            re.finditer(
+                r"(?i)\b(?:"
+                r"citizens?\s+of\s+([A-Za-z\s,]+)"
+                r"|nationals?\s+of\s+([A-Za-z\s,]+)"
+                r"|national\s+of\s+a\s+country\s+listed\s+on\s+the\s+([A-Za-z\s,-]+)"
+                r"|citizenship\s*&\s*residency\s*:\s*each\s+applicant\s+must\s+fulfil"
+                r"|hold\s+the\s+nationality\s+of\s+a\s+country"
+                r"|مواطني\s+([\u0600-\u06FF\s،]+)"
+                r")\b",
+                full_text,
+            )
         )
-        if restr_match:
-            matched_str = restr_match.group(0)
+
+        for m in restr_matches:
+            preceding_text = full_text[max(0, m.start() - 35) : m.start()]
+            if _NEGATION_PREFIX_PATTERN.search(preceding_text.strip()):
+                continue
+
+            matched_str = m.group(0).strip()
+            if len(matched_str) > 80:
+                matched_str = matched_str[:80].rsplit(" ", 1)[0]
+
             reqs.append(
                 ExtractedRequirement(
                     category="nationality",
@@ -303,16 +506,14 @@ class RequirementExtractor:
                     scope=RequirementScope.SCHOLARSHIP,
                     value={"description": matched_str},
                     operator="IN",
-                    evidence=_clean_span(
-                        full_text, restr_match.start(), restr_match.end()
-                    ),
+                    evidence=_clean_span(full_text, m.start(), m.end()),
                     confidence=ConfidenceLevel.MEDIUM,
                     source_field="description",
                 )
             )
             return reqs
 
-        # Silent nationality -> UNKNOWN
+        # 5. Silent nationality -> UNKNOWN
         reqs.append(
             ExtractedRequirement(
                 category="nationality",
