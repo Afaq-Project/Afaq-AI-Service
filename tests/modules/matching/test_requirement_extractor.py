@@ -77,6 +77,141 @@ class TestNationalityExtraction:
         assert req.status == RequirementStatus.UNKNOWN
         assert req.confidence == ConfidenceLevel.LOW
 
+    def test_open_to_international_followed_by_country_list_is_required(
+        self, extractor: RequirementExtractor
+    ) -> None:
+        """Rhodes case: 'open to international students from Australia, Canada...' must be REQUIRED."""
+        opp = {
+            "title": "Rhodes Scholarships at Oxford University",
+            "eligibility": {
+                "eligibility_text": "Target group: Australia, Bermuda, Canada, China, Germany, Hong Kong"
+            },
+            "description": "2026-27 Rhodes Scholarships are open to international students from Australia, Bermuda, Canada, China, Germany, Hong Kong.",
+        }
+        res = extractor.extract_requirements(opp)
+        req = res.get_first_by_category("nationality")
+        assert req is not None
+        assert req.status == RequirementStatus.REQUIRED
+
+    def test_open_to_international_followed_by_developing_countries_is_required(
+        self, extractor: RequirementExtractor
+    ) -> None:
+        """DAAD Development case: 'open to international students from developing countries' must be REQUIRED."""
+        opp = {
+            "title": "DAAD Scholarships in Germany for Development-Related Postgraduate Courses",
+            "eligibility": {
+                "eligibility_text": "Target group: Students from eligible countries\nEligibility: Is a national of a country listed on the OECD-DAC list"
+            },
+            "description": "2027/2028 DAAD Scholarships are open to international students from developing countries.",
+        }
+        res = extractor.extract_requirements(opp)
+        req = res.get_first_by_category("nationality")
+        assert req is not None
+        assert req.status == RequirementStatus.REQUIRED
+
+    def test_negative_exclusion_wording_does_not_extract_false_required(
+        self, extractor: RequirementExtractor
+    ) -> None:
+        """AU Emerging case: 'not U.S. citizens...dual citizens of the U.S.' must NOT extract U.S. as REQUIRED."""
+        opp = {
+            "title": "AU Emerging Global Leader Scholarship Program",
+            "eligibility": {
+                "eligibility_text": (
+                    "Target group: The scholarships are targeted to international students from any country "
+                    "who are not U.S. citizens, U.S. permanent residents, or dual citizens of the U.S. and another country.\n"
+                    "You are NOT eligible to apply if: You are a U.S. citizen, U.S. permanent resident, or dual citizen of the U.S."
+                )
+            },
+            "description": "AU Emerging Global Leader Scholarship Program for international students.",
+        }
+        res = extractor.extract_requirements(opp)
+        req = res.get_first_by_category("nationality")
+        assert req is not None
+        # Must not be REQUIRED (which would falsely restrict to U.S. citizens)
+        assert req.status != RequirementStatus.REQUIRED
+
+    def test_target_group_unrestricted_is_not_required(
+        self, extractor: RequirementExtractor
+    ) -> None:
+        """Unrestricted target groups like 'All applicants from any country' or 'International students' -> NOT_REQUIRED."""
+        for phrase in [
+            "All applicants from any country",
+            "All students including international students",
+            "National and International Students",
+            "International and EU students",
+            "International students",
+        ]:
+            opp = {
+                "title": "Global Excellence Scholarship",
+                "eligibility": {
+                    "eligibility_text": f"Target group: {phrase}\nEligibility: Outstanding academic record."
+                },
+                "description": "A prestigious scholarship program.",
+            }
+            res = extractor.extract_requirements(opp)
+            req = res.get_first_by_category("nationality")
+            assert req is not None, f"Failed for {phrase}"
+            assert (
+                req.status == RequirementStatus.NOT_REQUIRED
+            ), f"Failed for {phrase}: got {req.status}"
+
+    def test_target_group_restricted_is_required(
+        self, extractor: RequirementExtractor
+    ) -> None:
+        """Restricted target groups like 'Non-EU/EEA International Students' or country lists -> REQUIRED."""
+        for phrase in [
+            "Non-EU/EEA International Students",
+            "Citizens from non-EU/EEA/EFTA countries",
+            "International students from a country outside the EU/EEA.",
+            "Women who are not United States citizens or permanent residents.",
+            "Afghanistan, Angola, Bangladesh, Benin, Bhutan, Cambodia, Chad",
+        ]:
+            opp = {
+                "title": "Regional Scholarship",
+                "eligibility": {
+                    "eligibility_text": f"Target group: {phrase}\nEligibility: Full time enrolment."
+                },
+                "description": "Scholarship for eligible applicants.",
+            }
+            res = extractor.extract_requirements(opp)
+            req = res.get_first_by_category("nationality")
+            assert req is not None, f"Failed for {phrase}"
+            assert (
+                req.status == RequirementStatus.REQUIRED
+            ), f"Failed for {phrase}: got {req.status}"
+
+    def test_target_group_external_defer_remains_unknown(
+        self, extractor: RequirementExtractor
+    ) -> None:
+        """Target groups referencing external unlisted country sets ('from 155 countries') -> UNKNOWN."""
+        opp = {
+            "title": "Fulbright Foreign Student Program",
+            "eligibility": {
+                "eligibility_text": "Target group: International students from 155 countries around the world\nEligibility: Selection procedures vary by country."
+            },
+            "description": "Fulbright Foreign Student Program in the United States.",
+        }
+        res = extractor.extract_requirements(opp)
+        req = res.get_first_by_category("nationality")
+        assert req is not None
+        assert req.status == RequirementStatus.UNKNOWN
+
+    def test_target_group_non_nationality_remains_unknown(
+        self, extractor: RequirementExtractor
+    ) -> None:
+        """Target groups describing non-geographic criteria ('All enrolled students') -> UNKNOWN."""
+        opp = {
+            "title": "Berea College Scholarships",
+            "eligibility": {
+                "eligibility_text": "Target group: All enrolled students\nEligibility: Applicants must meet university entrance requirements."
+            },
+            "description": "Berea College scholarships for enrolled students.",
+        }
+        res = extractor.extract_requirements(opp)
+        req = res.get_first_by_category("nationality")
+        assert req is not None
+        assert req.status == RequirementStatus.UNKNOWN
+
     def test_explicit_residency_requirement(
         self, extractor: RequirementExtractor
     ) -> None:
@@ -511,20 +646,24 @@ class TestCleanedOpportunityDTOIntegration:
             description="Open to any subject available at the University of Cambridge. Minimum GPA of 3.7 / 4.0. English language requirement: IELTS 7.5.",
         )
         res = extractor.extract_requirements(dto)
-        assert (
-            res.get_first_by_category("nationality").status
-            == RequirementStatus.NOT_REQUIRED
-        )
-        assert (
-            res.get_first_by_category("education").status == RequirementStatus.REQUIRED
-        )
-        assert (
-            res.get_first_by_category("field_of_study").status
-            == RequirementStatus.NOT_REQUIRED
-        )
-        assert res.get_first_by_category("gpa").status == RequirementStatus.REQUIRED
-        assert res.get_first_by_category("gpa").value["minimum"] == 3.7
-        assert (
-            res.get_first_by_category("language").status == RequirementStatus.REQUIRED
-        )
-        assert res.get_first_by_category("language").value["min_score"] == 7.5
+        nat = res.get_first_by_category("nationality")
+        assert nat is not None
+        assert nat.status == RequirementStatus.NOT_REQUIRED
+
+        edu = res.get_first_by_category("education")
+        assert edu is not None
+        assert edu.status == RequirementStatus.REQUIRED
+
+        fos = res.get_first_by_category("field_of_study")
+        assert fos is not None
+        assert fos.status == RequirementStatus.NOT_REQUIRED
+
+        gpa = res.get_first_by_category("gpa")
+        assert gpa is not None
+        assert gpa.status == RequirementStatus.REQUIRED
+        assert gpa.value["minimum"] == 3.7
+
+        lang = res.get_first_by_category("language")
+        assert lang is not None
+        assert lang.status == RequirementStatus.REQUIRED
+        assert lang.value["min_score"] == 7.5
