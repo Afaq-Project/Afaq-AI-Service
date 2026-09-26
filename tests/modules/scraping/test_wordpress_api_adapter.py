@@ -39,6 +39,25 @@ def test_wordpress_api_adapter_parse_default_mapping():
     assert parsed["source_url"] == "https://example.com/wp-post-1"
     assert parsed["published_at"] == "2026-09-01T12:00:00"
     assert parsed["categories"] == ["Category 1", "Category 2"]
+    # Critical fix: categories must not be copied to fields_of_study
+    assert parsed["fields_of_study"] == []
+
+
+def test_wordpress_api_adapter_explicit_fields_of_study_mapping():
+    custom_config = {
+        "field_mapping": {
+            "fields_of_study": "meta.academic_fields",
+        }
+    }
+    adapter = WordPressApiAdapter(source_config=custom_config)
+    raw_item = {
+        "title": {"rendered": "Engineering Scholarship"},
+        "meta": {"academic_fields": ["Computer Science", "Artificial Intelligence"]},
+        "categories": ["Masters Scholarships", "Europe"],
+    }
+    parsed = adapter.parse(raw_item)
+    assert parsed["categories"] == ["Masters Scholarships", "Europe"]
+    assert parsed["fields_of_study"] == ["Computer Science", "Artificial Intelligence"]
 
 
 def test_wordpress_api_adapter_custom_field_mapping():
