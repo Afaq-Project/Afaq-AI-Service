@@ -60,6 +60,11 @@ class OpportunityRepository:
 
         return await self._db.cleanedopportunity.create(data=payload)  # type: ignore[arg-type]
 
+    async def get_cleaned_by_id(self, opportunity_id: str) -> Any | None:
+        return await self._db.cleanedopportunity.find_unique(
+            where={"id": opportunity_id}
+        )
+
     async def exists_by_content_hash(self, content_hash: str) -> bool:
         """يفحص وجود فرصة نظيفة بنفس البصمة (لمنع التكرار)."""
         found = await self._db.cleanedopportunity.find_first(
