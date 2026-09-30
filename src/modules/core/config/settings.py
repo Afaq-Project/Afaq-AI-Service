@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     webhook_timeout: float = 15.0
 
     anthropic_api_key: str = ""
+    google_api_key: str = ""
     ai_model: str = "claude-opus-5"
     ai_timeout_seconds: float = 120.0
     ai_max_retries: int = 1
