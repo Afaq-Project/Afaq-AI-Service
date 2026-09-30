@@ -2,6 +2,8 @@ import logging
 import re
 from typing import Any
 
+from bs4 import BeautifulSoup
+
 from .wordpress_api_adapter import WordPressApiAdapter
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,8 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
 
         organization = self._extract_organization(title, content)
 
+        eligibility = self._extract_eligibility(content)
+
         return {
             **base_parsed,
             "opportunity_type": opportunity_type,
@@ -75,6 +79,7 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
             "location": country,
             "deadline": deadline,
             "organization": organization,
+            "eligibility": eligibility or {},
         }
 
     def is_opportunity(self, raw_item: dict[str, Any]) -> bool:
@@ -241,21 +246,50 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
         categories: list[str],
         content: str,
     ) -> str | None:
-        combined = f"{title} {' '.join(categories)} {content[:1200]}"
+        combined = f"{title} {' '.join(categories)} {content[:1500]}"
 
+        # 1. Partial funding indicators (e.g. partially funded, tuition waiver/discount/deduction, % tuition)
         if re.search(
-            r"(?i)\b(fully[ -]?funded|full[ -]?funded|full funding|full scholarship|full tuition|100%[ -]?funded)\b",
+            r"(?i)\b(partially[ -]?funded|partial funding|partial scholarship|tuition\s*(?:fee)?\s*(?:waiver|discount|reduction|deduction)|partial tuition)\b",
             combined,
-        ):
-            return "fully_funded"
-
-        if re.search(
-            r"(?i)\b(partially[ -]?funded|partial funding|partial scholarship|tuition waiver|tuition discount)\b",
+        ) or re.search(
+            r"(?i)\b(?:up to\s*)?\d{1,2}%\s*(?:of\s*(?:the\s*)?)?(?:tuition|mba tuition|fees?)\b",
             combined,
         ):
             return "partially_funded"
 
-        if re.search(r"(?i)\b(unfunded|self[ -]?funded)\b", combined):
+        # Specific grant amounts or partial coverage (e.g. £15,000 annual grant, ¥70,000 per month, reimbursement up to specific limit)
+        if (
+            re.search(
+                r"(?i)\b(?:grant of|grant:|stipend of|stipends?:|valued at|ranges from|award of|award:|total\s+value|scholarship\s+value|fellowship:|up\s+to|allowance of|scholarship covers|includes|amounts to|receive)\s*(?:[£$€¥￥]|CHF|EUR|USD|GBP|JPY|AUD|CAD)?\s*[\d,',’]+",
+                combined,
+            )
+            or re.search(
+                r"(?i)(?:[£$€¥￥]|CHF|EUR|USD|GBP|JPY|AUD|CAD)\s*[\d,',’]+\s*(?:annual grant|per year|per semester|per month)",
+                combined,
+            )
+            or re.search(
+                r"(?i)\b(?:reimbursement.*?academic fees.*?up to a specific limit)\b",
+                combined,
+            )
+        ):
+            return "partially_funded"
+
+        # 2. Fully funded indicators
+        if re.search(
+            r"(?i)\b(fully[ -]?funded|full[ -]?funded|full funding|full scholarship|100% tuition|full tuition)\b",
+            combined,
+        ):
+            return "fully_funded"
+
+        # 3. Unfunded indicators
+        if re.search(
+            r"(?i)\b(unfunded position|unfunded program|unfunded opportunity|no financial support|non[ -]?funded)\b",
+            combined,
+        ) or re.search(
+            r"(?i)\b(?:opportunity|program|scholarship|position|fellowship|internship)\s+is\s+(?:unfunded|self[ -]?funded)\b",
+            combined,
+        ):
             return "unfunded"
 
         return None
@@ -312,11 +346,11 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
         """
         patterns = [
             re.compile(
-                r"(?:application\s+deadline|deadline|last\s+date\s+to\s+apply|last\s+date|due\s+date|applications?\s+close(?:\s+on)?|closing\s+date|closes\s+on|apply\s+by|apply\s+before)[:\s]+([^\n\.,;,<]{5,50})",
+                r"(?:application\s+deadlines?|deadlines?|last\s+date\s+to\s+apply|last\s+date|due\s+date|applications?\s+close(?:\s+on)?|closing\s+date|closes\s+on|apply\s+by|apply\s+before)[:\s]+([^\n\.;<]{5,80})",
                 re.IGNORECASE,
             ),
             re.compile(
-                r"(?:submit(?:ting|s)?(?:\s+your)?\s+application(?:s)?\s+(?:by|before|no\s+later\s+than))[:\s]+([^\n\.,;,<]{5,50})",
+                r"(?:submit(?:ting|s)?(?:\s+your)?\s+application(?:s)?\s+(?:by|before|no\s+later\s+than))[:\s]+([^\n\.;<]{5,80})",
                 re.IGNORECASE,
             ),
         ]
@@ -325,7 +359,7 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
             if match:
                 candidate = match.group(1).strip()
                 # Reject candidates that are clearly not dates (too vague or too long)
-                if len(candidate) <= 50 and any(
+                if len(candidate) <= 80 and any(
                     c.isdigit() or c.isalpha() for c in candidate
                 ):
                     return candidate
@@ -378,5 +412,93 @@ class GrabScholarshipAdapter(WordPressApiAdapter):
                 candidate = match.group(1).strip()
                 if 3 <= len(candidate) <= 80:
                     return candidate
+
+        return None
+
+    def _extract_eligibility(self, content_html: str) -> dict[str, Any] | None:
+        """
+        يستخرج معايير وشروط الأهلية من محتوى المقال في GrabScholarships.
+        يبحث عن العناوين المخصصة (Eligibility Criteria / Requirements / Who can apply)
+        ويجمع عناصر القوائم والفقرات حتى الوصول إلى حد التوقف (العنوان التالي غير المرتبط).
+        """
+        if not content_html or not isinstance(content_html, str):
+            return None
+
+        soup = BeautifulSoup(content_html, "html.parser")
+
+        heading_pattern = re.compile(
+            r"(?i)\b(eligibility\s+criteria|eligibility\s+requirements|eligibility|who\s+can\s+apply|who\s+is\s+eligible|entry\s+requirements|general\s+requirements|selection\s+criteria)\b"
+        )
+        stop_pattern = re.compile(
+            r"(?i)\b(how\s+to\s+apply|application\s+process|application\s+procedure|benefits|financial\s+coverage|scholarship\s+benefits|financial\s+benefits|required\s+documents|documents\s+required|application\s+deadline|deadlines?|important\s+dates|selection\s+process|faq|why\s+choose|apply\s+now|official\s+link|ineligibility\s+criteria)\b"
+        )
+
+        candidate_blocks: list[str] = []
+
+        # 1. Primary strategy: Find explicit heading (h1-h6)
+        for h in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+            h_text = h.get_text(" ", strip=True)
+            if heading_pattern.search(h_text) and not stop_pattern.search(h_text):
+                curr = h.find_next_sibling()
+                while curr:
+                    if curr.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
+                        curr_text = curr.get_text(" ", strip=True)
+                        if stop_pattern.search(curr_text):
+                            break
+                        if re.search(
+                            r"(?i)\b(academic|admission|residency|language|general|criteria|requirements)\b",
+                            curr_text,
+                        ):
+                            candidate_blocks.append(f"{curr_text}:")
+                            curr = curr.find_next_sibling()
+                            continue
+                        break
+
+                    if curr.name in ["ul", "ol"]:
+                        for li in curr.find_all("li", recursive=False):
+                            li_text = li.get_text(" ", strip=True)
+                            if li_text:
+                                candidate_blocks.append(f"• {li_text}")
+                    elif curr.name in ["p", "div"]:
+                        p_text = curr.get_text(" ", strip=True)
+                        if p_text and not re.search(
+                            r"(?i)\b(apply\s+also|read\s+also|share\s+this|click\s+here)\b",
+                            p_text,
+                        ):
+                            candidate_blocks.append(p_text)
+
+                    curr = curr.find_next_sibling()
+
+                if candidate_blocks:
+                    break
+
+        # 2. Fallback strategy: Look for strong/b labeled paragraph
+        if not candidate_blocks:
+            for strong in soup.find_all(["strong", "b"]):
+                st_text = strong.get_text(" ", strip=True)
+                normalized_label = re.sub(r"[:：]\s*$", "", st_text).strip()
+                if heading_pattern.fullmatch(normalized_label):
+                    parent = strong.find_parent(["p", "div", "li"])
+                    if parent:
+                        parent_text = parent.get_text(" ", strip=True)
+                        candidate_blocks.append(parent_text)
+                        sib = parent.find_next_sibling()
+                        if sib and sib.name in ["ul", "ol"]:
+                            for li in sib.find_all("li", recursive=False):
+                                li_text = li.get_text(" ", strip=True)
+                                if li_text:
+                                    candidate_blocks.append(f"• {li_text}")
+                        elif sib and sib.name in ["p", "div"]:
+                            sib_text = sib.get_text(" ", strip=True)
+                            if sib_text and not stop_pattern.search(sib_text):
+                                candidate_blocks.append(sib_text)
+                    if candidate_blocks:
+                        break
+
+        if candidate_blocks:
+            full_text = "\n".join(candidate_blocks).strip()
+            full_text = re.sub(r"\n{3,}", "\n\n", full_text)
+            if len(full_text) >= 15:
+                return {"eligibility_text": full_text}
 
         return None

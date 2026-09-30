@@ -383,7 +383,7 @@ class Scholars4DevAdapter(BaseAdapter):
         fields_of_study = self._extract_fields_of_study(content)
 
         # Funding type
-        funding_type = self._extract_funding_type(content)
+        funding_type = self._extract_funding_type(full_text)
 
         # Deadline
         deadline = self._extract_deadline(full_text)
@@ -393,6 +393,9 @@ class Scholars4DevAdapter(BaseAdapter):
 
         # Organization / Host Institution
         organization = self._extract_organization(full_text)
+
+        # Eligibility
+        eligibility = self._extract_eligibility(content)
 
         return {
             "title": title,
@@ -407,6 +410,7 @@ class Scholars4DevAdapter(BaseAdapter):
             "country": country,
             "location": country,
             "organization": organization,
+            "eligibility": eligibility or {},
             "raw_payload": raw_item,
         }
 
@@ -486,51 +490,108 @@ class Scholars4DevAdapter(BaseAdapter):
 
         text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
 
-        if (
-            re.search(
-                r"(?i)\btuition\b",
+        # 1. Unfunded / self-funded
+        if re.search(
+            r"(?i)\b(unfunded|self[ -]?funded|no financial support|non[ -]?funded)\b",
+            text,
+        ):
+            return "unfunded"
+
+        # 2. Check for explicit statement that tuition is NOT covered (Partial funding)
+        if re.search(
+            r"(?i)\b(does not cover tuition|not cover tuition|tuition is not included|exempt from.*?except)\b",
+            text,
+        ):
+            if re.search(
+                r"(?i)\b(living|stipend|allowance|grant|chf|eur|usd|gbp|\$|€|£)\b",
                 text,
-            )
-            and re.search(
-                r"(?i)\b(airfare|travel)\b",
-                text,
-            )
-            and re.search(
-                r"(?i)\b(living stipend|stipend|living allowance|grant for living costs)\b",
-                text,
-            )
+            ):
+                return "partially_funded"
+
+        # 3. Comprehensive / Full funding patterns
+        # A. Explicit full keywords
+        if re.search(
+            r"(?i)\b(fully[ -]?funded|full[ -]?funding|full[- ]cost|full tuition|100%[ -]?tuition|100%[ -]?funded|comprehensive scholarship|full scholarship|full scholarships)\b",
+            text,
         ):
             return "fully_funded"
 
         if re.search(
-            r"(?i)\b(fully[ -]?funded|full[- ]cost|full tuition|comprehensive scholarship|full scholarship|full scholarships)\b",
+            r"(?i)\b(tuition and college fees in full|all university and college fees|full payment of your academic fees)\b",
             text,
         ):
             return "fully_funded"
-        if re.search(
-            r"(?i)\btuition and college fees in full\b",
-            text,
-        ):
+
+        # B. Tuition + Living Support combinations
+        has_tuition = bool(
+            re.search(
+                r"(?i)\b(tuition|academic fees|college fees|course fees|associated fees|tuition fee waiver|tuition waiver)\b",
+                text,
+            )
+        )
+        has_living = bool(
+            re.search(
+                r"(?i)\b(living stipend|living allowance|living expenses|subsistence allowance|maintenance stipend|monthly stipend|monthly allowance|monthly payments|grant for living|residence support|accommodation|room and board|study expenses|stipends?)\b",
+                text,
+            )
+        )
+        has_travel = bool(
+            re.search(
+                r"(?i)\b(airfare|air fare|travel allowance|flight allowance|return flights?|travel expenses|flights?)\b",
+                text,
+            )
+        )
+
+        if has_tuition and has_living:
             return "fully_funded"
-        if re.search(
-            r"(?i)\bfull payment of your academic fees\b",
-            text,
-        ) and re.search(
-            r"(?i)\bmaintenance stipend\b",
-            text,
+
+        if (
+            has_living
+            and has_travel
+            and bool(re.search(r"(?i)\b(insurance|settlement allowance)\b", text))
         ):
+            # e.g., DAAD, KOICA
             return "fully_funded"
+
+        # 4. Explicit Partial funding patterns
         if re.search(
-            r"(?i)\b(partially[ -]?funded|partial funding|tuition fee waiver)\b",
+            r"(?i)\b(partially[ -]?funded|partial funding|partial scholarship|tuition[ -]?waiver|tuition[ -]?discount|tuition[ -]?reduction|tuition[ -]?deduction|partial tuition)\b",
             text,
         ):
             return "partially_funded"
 
+        # Covers tuition fee only (without living costs)
+        if (
+            re.search(
+                r"(?i)\b(?:covers|cover|pays?)\s+(?:the\s+)?tuition\s+fees?\b",
+                text,
+            )
+            and not has_living
+        ):
+            return "partially_funded"
+
+        # Specific grant amounts without full coverage (e.g., £15,000 annual grant, CHF 10'000 per semester, $5,000–$10,000 per year, Up to $40,000, Fellowship: $20,000)
+        if (
+            re.search(
+                r"(?i)\b(?:grant of|grant:|stipend of|stipends?:|valued at|ranges from|award of|award:|total\s+value|scholarship\s+value|fellowship:|up\s+to|allowance of|scholarship covers|includes|amounts to)\s*(?:[£$€¥￥]|CHF|EUR|USD|GBP|JPY|AUD|CAD)\s*[\d,',’]+",
+                text,
+            )
+            or re.search(
+                r"(?i)\b(?:receive|provides?|fellowship|stipend|grant|allowance|award)\s+(?:a\s+)?(?:[£$€¥￥]|CHF|EUR|USD|GBP|JPY|AUD|CAD)\s*[\d,',’]+(?:\s*[-–]\s*(?:[£$€¥￥]|CHF|EUR|USD|GBP|JPY|AUD|CAD)?\s*[\d,',’]+)?\s*(?:per (?:year|annum|semester|month)|annual(?:ly)?|a year|each year|per academic year)?",
+                text,
+            )
+            or re.search(
+                r"(?i)(?:[£$€¥￥]|CHF|EUR|USD|GBP|JPY|AUD|CAD)\s*[\d,',’]+(?:\s*[-–]\s*(?:[£$€¥￥]|CHF|EUR|USD|GBP|JPY|AUD|CAD)?\s*[\d,',’]+)?\s*(?:per (?:year|annum|semester|month)|annual(?:ly)?|a year|each year|per academic year)\s+(?:grant|stipend|allowance|scholarship|award|fellowship)",
+                text,
+            )
+        ):
+            return "partially_funded"
+
         if re.search(
-            r"(?i)\b(unfunded|self[ -]?funded)\b",
+            r"(?i)\b(covers \d+(?:\.\d+)?-\d+(?:\.\d+)? (?:undergraduate|graduate)?\s*units)\b",
             text,
         ):
-            return "unfunded"
+            return "partially_funded"
 
         return None
 
@@ -652,5 +713,115 @@ class Scholars4DevAdapter(BaseAdapter):
 
         if section:
             return section.strip()
+
+        return None
+
+    def _extract_eligibility(self, html: str) -> dict[str, Any] | None:
+        """
+        يستخرج قسمي الفئة المستهدفة (Target group) وشروط الأهلية (Eligibility) من Scholars4Dev
+        ودمجهما في حقل نصي واحد متكامل eligibility_text.
+        """
+        if not html or not isinstance(html, str):
+            return None
+
+        soup = BeautifulSoup(html, "html.parser")
+
+        stop_label_pattern = re.compile(
+            r"(?i)\b(deadline|brief description|host institution|fields? of study|level|number of (?:awards|scholarships)|target group|scholarship (?:value|inclusions|benefits)|eligibility|application instructions|instructions|how to apply|website|disclaimer)\b"
+        )
+
+        def extract_section_text(patterns: list[str]) -> str | None:
+            for label in soup.find_all(["strong", "b"]):
+                label_text = label.get_text(" ", strip=True)
+                normalized_label = re.sub(r"[:：]\s*$", "", label_text).strip()
+
+                if not any(
+                    re.fullmatch(p, normalized_label, re.IGNORECASE) for p in patterns
+                ):
+                    continue
+
+                parent = label.find_parent(["p", "div"])
+                if not parent:
+                    continue
+
+                collected: list[str] = []
+
+                # Text within the parent paragraph after the label
+                parent_clone = BeautifulSoup(str(parent), "html.parser")
+                for s in parent_clone.find_all(["strong", "b"]):
+                    s.decompose()
+                inline_txt = parent_clone.get_text(" ", strip=True)
+                if inline_txt:
+                    collected.append(inline_txt)
+
+                # Iterate following siblings until next major section
+                sibling = parent.find_next_sibling()
+                while sibling:
+                    strong_child = sibling.find(["strong", "b"])
+                    if strong_child:
+                        child_label = re.sub(
+                            r"[:：]\s*$", "", strong_child.get_text(" ", strip=True)
+                        ).strip()
+                        if stop_label_pattern.search(child_label):
+                            break
+
+                    if sibling.name in ["ul", "ol"]:
+                        for li in sibling.find_all("li", recursive=False):
+                            li_txt = li.get_text(" ", strip=True)
+                            if li_txt:
+                                collected.append(f"• {li_txt}")
+                    elif sibling.name in ["p", "div"]:
+                        txt = sibling.get_text(" ", strip=True)
+                        if txt:
+                            collected.append(txt)
+
+                    sibling = sibling.find_next_sibling()
+
+                if collected:
+                    return "\n".join(collected).strip()
+
+            return None
+
+        # 1. Extract Target Group
+        target_group = extract_section_text(
+            [
+                r"Target\s+group(?:\(s\))?",
+                r"Target\s+groups?",
+                r"Eligible\s+Nationalit(?:y|ies)",
+                r"Eligible\s+Countr(?:y|ies)",
+            ]
+        )
+
+        # 2. Extract Eligibility Requirements
+        eligibility_reqs = extract_section_text(
+            [
+                r"Eligibility\s+Requirements?",
+                r"Eligibility\s+Criteria",
+                r"Eligibility",
+                r"Eligible\s+Applicants?",
+                r"Who\s+is\s+eligible",
+                r"Candidate\s+Requirements?",
+            ]
+        )
+
+        blocks: list[str] = []
+        if target_group and target_group.strip():
+            tg_clean = target_group.strip()
+            if not tg_clean.lower().startswith("target group"):
+                blocks.append(f"Target group: {tg_clean}")
+            else:
+                blocks.append(tg_clean)
+
+        if eligibility_reqs and eligibility_reqs.strip():
+            el_clean = eligibility_reqs.strip()
+            if not el_clean.lower().startswith("eligibility"):
+                blocks.append(f"Eligibility: {el_clean}")
+            else:
+                blocks.append(el_clean)
+
+        if blocks:
+            combined = "\n\n".join(blocks).strip()
+            if len(combined) >= 10:
+                return {"eligibility_text": combined}
 
         return None

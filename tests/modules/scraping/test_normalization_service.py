@@ -73,3 +73,66 @@ def test_normalization_service_no_false_positive_abbreviations():
     )
     assert "Master" not in normalized
     assert "Bachelor" not in normalized
+
+
+def test_normalization_service_fields_of_study_preserves_academic_disciplines():
+    service = NormalizationService()
+    academic_fields = [
+        "Computer Science",
+        "Engineering",
+        "Medicine",
+        "Business Administration",
+        "Economics",
+        "Artificial Intelligence",
+        "Data Science",
+        "International Relations",
+        "Peace and Conflict Resolution",
+        "All fields",
+    ]
+    normalized = service.normalize_fields_of_study(academic_fields)
+    assert "Computer Science" in normalized
+    assert "Engineering" in normalized
+    assert "Medicine" in normalized
+    assert "Business Administration" in normalized
+    assert "Economics" in normalized
+    assert "Artificial Intelligence" in normalized
+    assert "Data Science" in normalized
+    assert "International Relations" in normalized
+    assert "Peace And Conflict Resolution" in normalized
+    assert "All Fields" in normalized
+
+
+def test_normalization_service_fields_of_study_rejects_taxonomy_noise():
+    service = NormalizationService()
+    noise_tokens = [
+        "Scholarships",
+        "Masters Scholarships",
+        "Undergraduate Scholarships",
+        "PhD Scholarships",
+        "Canada",
+        "United Kingdom",
+        "UK",
+        "USA",
+        "Europe",
+        "Asia",
+        "Study In UK",
+        "Fully Funded",
+        "University of Alberta",
+        "Swansea University",
+        "Online",
+        "Exchange",
+    ]
+    normalized = service.normalize_fields_of_study(noise_tokens)
+    assert normalized == []
+
+
+def test_normalization_service_fields_of_study_mixed_list():
+    service = NormalizationService()
+    mixed = [
+        "Computer Science",
+        "Scholarships",
+        "Canada",
+        "Masters Scholarships",
+    ]
+    normalized = service.normalize_fields_of_study(mixed)
+    assert normalized == ["Computer Science"]
