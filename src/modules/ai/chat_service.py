@@ -10,7 +10,7 @@ from src.modules.core.database.repositories.conversation_repository import (
 from src.modules.core.database.repositories.opportunity_repository import (
     OpportunityRepository,
 )
-from src.modules.infrastructure.llm.anthropic_client import translate_error
+from src.modules.infrastructure.llm.errors import translate_error
 
 from .chat_agent import (
     ChatAgentFactory,
@@ -19,7 +19,7 @@ from .chat_agent import (
     token_usage,
 )
 from .constants import Locale, blocked_message, decline_message
-from .eligibility import EligibilityGuard
+from .eligibility import EligibilityGuard, strip_marker
 from .exceptions import OpportunityNotFoundError
 from .models import ChatReply, ConversationHistory, UserProfile
 from .prompts import build_chat_system_prompt
@@ -141,6 +141,7 @@ class ChatService:
             return await self._decline(
                 conversation.id, "insufficient_data", source_url, locale
             )
+        answer = strip_marker(answer)
 
         input_tokens, output_tokens = token_usage(result)
         stored = await self._conversations.add_message(

@@ -221,6 +221,16 @@ Answers a student's question about one opportunity, using only the stored opport
 
 The user's message is saved even when the model call fails, so no input is lost.
 
+### 3.8 Choosing the AI Provider
+The provider is selected from `AI_MODEL` — no code change needed.
+
+| `AI_MODEL` | Provider | Key |
+| --- | --- | --- |
+| `claude-opus-5`, `claude-sonnet-5`, … | Anthropic | `ANTHROPIC_API_KEY` |
+| `gemini-3.8-flash`, `gemini-3.1-flash-lite`, … | Google Gemini | `GOOGLE_API_KEY` |
+
+Anthropic is billed per token. Gemini has a free tier with a low per-minute request limit, which surfaces as `429 ai_busy`; on the free tier prefer a `flash-lite` model. `AI_REFUSAL_FALLBACKS` applies to Anthropic only.
+
 ---
 
 ## 4. Webhook Notification (Python Service → Main Service)
