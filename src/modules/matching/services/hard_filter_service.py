@@ -1,3 +1,16 @@
+"""Hard eligibility filter for Afaq AI Matching Engine.
+
+Evaluates ALL REQUIRED requirements (nationality, education, GPA, age, language,
+experience, financial need, field of study) as gating eligibility filters.
+
+Rules:
+- REQUIRED condition fails -> decision = INELIGIBLE (is_eligible = False).
+- REQUIRED condition passes -> decision = ELIGIBLE (is_eligible = True).
+- Missing user data, uncomputable, or low confidence -> decision = UNKNOWN (is_eligible = True, NOT excluded).
+- PREFERRED, NOT_REQUIRED, UNKNOWN requirements -> ignored during hard filtering.
+"""
+
+from datetime import date
 from typing import Any
 
 from src.modules.matching.models import (
@@ -8,837 +21,643 @@ from src.modules.matching.models import (
     ExtractedRequirement,
     HardFilterResultDTO,
     OpportunityRequirementsDTO,
+    RequirementCondition,
     RequirementStatus,
     RequirementType,
+    UserProfileDTO,
 )
-from src.modules.matching.services.requirement_extractor import (
-    RequirementExtractor,
-)
+from src.modules.matching.services.requirement_extractor import RequirementExtractor
 from src.modules.scraping.services.normalization_service import NormalizationService
+
+# Study-level hierarchy for education level comparison
+_LEVEL_ORDER = ["High School", "Diploma", "Bachelor", "Master", "PhD", "Postdoc"]
+_LEVEL_RANK: dict[str, int] = {lvl: i for i, lvl in enumerate(_LEVEL_ORDER)}
+
+import re  # noqa: E402
+
+
+def _user_has_matching_experience_area(
+    user_profile: UserProfileDTO,
+    req_area: str,
+) -> bool:
+    """Checks if user_profile.experiences contains a matching experience area without naive substring search."""
+    if not user_profile.experiences:
+        return False
+
+    req_area_clean = req_area.lower().strip()
+    if req_area_clean in ("relevant_experience", "preferred", "no_experience_required"):
+        return True  # Any non-empty experience entry matches generic requirement
+
+    area_patterns = {
+        "research": re.compile(r"(?i)\bresearch(?:er|ing|es|ed|ch)?\b"),
+        "volunteering": re.compile(r"(?i)\bvolunteer(?:ing|s|ed)?\b"),
+        "volunteer": re.compile(r"(?i)\bvolunteer(?:ing|s|ed)?\b"),
+        "teaching": re.compile(r"(?i)\bteach(?:ing|er|es)?\b|\btutor(?:ing|s)?\b"),
+        "clinical": re.compile(r"(?i)\bclinical|medical\b"),
+        "leadership": re.compile(r"(?i)\bleader(?:ship|s)?\b"),
+        "work": re.compile(
+            r"(?i)\bwork(?:ing|ed)?\b|\bprofessional\b|\bemployment\b|\bjob\b"
+        ),
+    }
+
+    pat = area_patterns.get(
+        req_area_clean,
+        re.compile(rf"(?i)\b{re.escape(req_area_clean)}\b"),
+    )
+
+    for exp_entry in user_profile.experiences:
+        if pat.search(exp_entry):
+            return True
+    return False
 
 
 def passes_nationality_filter(
     user_nationality: str | None,
     eligible_nationalities: list[str] | str | None,
-    normalizer: NormalizationService | None = None,
+    normalizer: NormalizationService,
 ) -> bool:
-    """Evaluates nationality eligibility against opportunity requirements.
-
-    Rules:
-    - Case 1 (No restriction): If eligible_nationalities is missing/empty -> PASS.
-    - Case 3 (Open to all): If eligible_nationalities contains a canonical open-to-all value -> PASS.
-    - Case 2 (Explicit restriction):
-        - User nationality is missing/empty -> FAIL.
-        - User nationality matches one of the eligible nationalities -> PASS.
-        - User nationality does not match -> FAIL.
-    """
-    if eligible_nationalities is None:
+    """Legacy convenience function: returns True if user passes nationality constraint."""
+    if not eligible_nationalities:
         return True
-
     if isinstance(eligible_nationalities, str):
-        cleaned_str = eligible_nationalities.strip()
-        if not cleaned_str:
+        eligible_nationalities = [eligible_nationalities]
+    if not user_nationality:
+        return True  # Missing user data -> not excluded
+    norm_user = (
+        normalizer.normalize_country(user_nationality)
+        or user_nationality.strip().lower()
+    )
+    for nat in eligible_nationalities:
+        norm_nat = nat.strip().lower()
+        if norm_nat in OPEN_TO_ALL_NATIONALITIES:
             return True
-        raw_items = [cleaned_str]
-    elif isinstance(eligible_nationalities, list):
-        if not eligible_nationalities:
+        if norm_user.lower() == norm_nat:
             return True
-        raw_items = eligible_nationalities
-    else:
-        return True
-
-    valid_items = [
-        str(item).strip()
-        for item in raw_items
-        if item is not None and str(item).strip()
-    ]
-    if not valid_items:
-        return True
-
-    # Case 3: Canonical Open-to-All exact match (case-insensitive)
-    for item in valid_items:
-        if item.lower() in OPEN_TO_ALL_NATIONALITIES:
-            return True
-
-    # Case 2: Explicit restriction exists -> user nationality is mandatory
-    if not user_nationality or not str(user_nationality).strip():
-        return False
-
-    norm = normalizer or NormalizationService()
-    user_nat_clean = str(user_nationality).strip()
-    user_nat_norm = norm.normalize_country(user_nat_clean)
-    user_nat_lower = user_nat_clean.lower()
-
-    for item in valid_items:
-        item_clean = str(item).strip()
-        item_norm = norm.normalize_country(item_clean)
-        item_lower = item_clean.lower()
-
-        # Compare normalized standard forms if available
-        if user_nat_norm and item_norm and user_nat_norm.lower() == item_norm.lower():
-            return True
-
-        # Fallback exact case-insensitive match
-        if user_nat_lower == item_lower:
-            return True
-
     return False
 
 
 def passes_education_filter(
     user_education_level: str | None,
-    required_study_levels: list[str] | str | None,
-    normalizer: NormalizationService | None = None,
+    required_study_levels: list[str],
+    normalizer: NormalizationService,
 ) -> bool:
-    """Evaluates strict education-level eligibility against opportunity requirements.
-
-    Rules:
-    - If opportunity has no study level requirements (missing/empty) -> PASS.
-    - If opportunity requires one or more study levels:
-        - User education level is missing/empty -> FAIL.
-        - User education level matches ANY required study level -> PASS.
-        - User education level matches none -> FAIL.
-    """
-    if required_study_levels is None:
+    """Legacy convenience function: returns True if user meets education level constraint."""
+    if not required_study_levels:
         return True
-
-    if isinstance(required_study_levels, str):
-        cleaned_str = required_study_levels.strip()
-        if not cleaned_str:
+    if not user_education_level:
+        return True  # Missing user data -> not excluded
+    normalized_levels = normalizer.normalize_study_levels(required_study_levels)
+    user_rank = _LEVEL_RANK.get(user_education_level, -1)
+    for required_level in normalized_levels:
+        req_rank = _LEVEL_RANK.get(required_level, -1)
+        if user_rank >= req_rank - 1 >= 0:
             return True
-        raw_levels = [cleaned_str]
-    elif isinstance(required_study_levels, list):
-        if not required_study_levels:
-            return True
-        raw_levels = required_study_levels
-    else:
-        return True
-
-    valid_req_levels = [
-        str(lvl).strip() for lvl in raw_levels if lvl is not None and str(lvl).strip()
-    ]
-    if not valid_req_levels:
-        return True
-
-    # Explicit study level requirement exists -> user education is mandatory
-    if not user_education_level or not str(user_education_level).strip():
-        return False
-
-    norm = normalizer or NormalizationService()
-    user_edu_clean = str(user_education_level).strip()
-    user_levels_norm = norm.normalize_study_levels([user_edu_clean.replace("_", " ")])
-
-    cleaned_req_levels = [lvl.replace("_", " ") for lvl in valid_req_levels]
-    norm_required = norm.normalize_study_levels(cleaned_req_levels)
-    req_set = (
-        set(norm_required)
-        if norm_required
-        else {lvl.lower() for lvl in valid_req_levels}
-    )
-
-    if user_levels_norm:
-        if any(lvl in req_set for lvl in user_levels_norm):
-            return True
-    else:
-        # Fallback comparison if not mapped by standard regex patterns
-        user_lower = user_edu_clean.lower()
-        valid_lower_set = {lvl.lower() for lvl in valid_req_levels} | {
-            lvl.lower() for lvl in cleaned_req_levels
-        }
-        if user_lower in valid_lower_set:
-            return True
-
     return False
 
 
-def _evaluate_single_nationality_req(
-    user_nationality: str | None,
-    req: ExtractedRequirement | None,
-    norm: NormalizationService,
-) -> CriterionEvaluation:
-    category = "nationality"
-    if req is None:
-        return CriterionEvaluation(
-            category=category,
-            decision=EligibilityDecision.ELIGIBLE,
-            requirement_status=RequirementStatus.NOT_REQUIRED,
-            reason="No explicit nationality restriction found in opportunity",
-            evidence=None,
-            confidence=ConfidenceLevel.HIGH,
-        )
-
-    if req.status == RequirementStatus.UNKNOWN:
-        return CriterionEvaluation(
-            category=category,
-            decision=EligibilityDecision.UNKNOWN,
-            requirement_status=RequirementStatus.UNKNOWN,
-            reason="No explicit nationality restriction found in opportunity",
-            evidence=req.evidence,
-            confidence=req.confidence,
-        )
-
-    if req.status == RequirementStatus.NOT_REQUIRED:
-        return CriterionEvaluation(
-            category=category,
-            decision=EligibilityDecision.ELIGIBLE,
-            requirement_status=RequirementStatus.NOT_REQUIRED,
-            reason="Opportunity is explicitly open to all nationalities",
-            evidence=req.evidence,
-            confidence=req.confidence,
-        )
-
-    if req.status == RequirementStatus.REQUIRED:
-        # Handle compound conditions if present
-        if req.conditions and req.conditions.items:
-            cond_op = req.conditions.operator.upper()
-            cond_evals = [
-                _evaluate_single_nationality_req(
-                    user_nationality,
-                    (
-                        item
-                        if isinstance(item, ExtractedRequirement)
-                        else ExtractedRequirement(**item)
-                    ),
-                    norm,
-                )
-                for item in req.conditions.items
-            ]
-            if cond_op == "AND":
-                if any(
-                    c.decision == EligibilityDecision.INELIGIBLE for c in cond_evals
-                ):
-                    ineligible_c = next(
-                        c
-                        for c in cond_evals
-                        if c.decision == EligibilityDecision.INELIGIBLE
-                    )
-                    return CriterionEvaluation(
-                        category=category,
-                        decision=EligibilityDecision.INELIGIBLE,
-                        requirement_status=req.status,
-                        reason=ineligible_c.reason,
-                        evidence=req.evidence,
-                        confidence=req.confidence,
-                    )
-                elif all(
-                    c.decision == EligibilityDecision.ELIGIBLE for c in cond_evals
-                ):
-                    return CriterionEvaluation(
-                        category=category,
-                        decision=EligibilityDecision.ELIGIBLE,
-                        requirement_status=req.status,
-                        reason="All compound nationality requirements satisfied",
-                        evidence=req.evidence,
-                        confidence=req.confidence,
-                    )
-                else:
-                    unknown_c = next(
-                        (
-                            c
-                            for c in cond_evals
-                            if c.decision == EligibilityDecision.UNKNOWN
-                        ),
-                        None,
-                    )
-                    return CriterionEvaluation(
-                        category=category,
-                        decision=EligibilityDecision.UNKNOWN,
-                        requirement_status=req.status,
-                        reason=(
-                            unknown_c.reason
-                            if unknown_c
-                            else "Compound nationality requirements undetermined"
-                        ),
-                        evidence=req.evidence,
-                        confidence=req.confidence,
-                    )
-            elif cond_op == "OR":
-                if any(c.decision == EligibilityDecision.ELIGIBLE for c in cond_evals):
-                    eligible_c = next(
-                        c
-                        for c in cond_evals
-                        if c.decision == EligibilityDecision.ELIGIBLE
-                    )
-                    return CriterionEvaluation(
-                        category=category,
-                        decision=EligibilityDecision.ELIGIBLE,
-                        requirement_status=req.status,
-                        reason=eligible_c.reason,
-                        evidence=req.evidence,
-                        confidence=req.confidence,
-                    )
-                elif all(
-                    c.decision == EligibilityDecision.INELIGIBLE for c in cond_evals
-                ):
-                    return CriterionEvaluation(
-                        category=category,
-                        decision=EligibilityDecision.INELIGIBLE,
-                        requirement_status=req.status,
-                        reason="User does not satisfy any of the alternative nationality requirements",
-                        evidence=req.evidence,
-                        confidence=req.confidence,
-                    )
-                else:
-                    unknown_c = next(
-                        (
-                            c
-                            for c in cond_evals
-                            if c.decision == EligibilityDecision.UNKNOWN
-                        ),
-                        None,
-                    )
-                    return CriterionEvaluation(
-                        category=category,
-                        decision=EligibilityDecision.UNKNOWN,
-                        requirement_status=req.status,
-                        reason=(
-                            unknown_c.reason
-                            if unknown_c
-                            else "Alternative nationality requirements undetermined"
-                        ),
-                        evidence=req.evidence,
-                        confidence=req.confidence,
-                    )
-
-        # Low confidence extracted requirement -> UNKNOWN (never hard exclusion)
-        if req.confidence == ConfidenceLevel.LOW:
-            return CriterionEvaluation(
-                category=category,
-                decision=EligibilityDecision.UNKNOWN,
-                requirement_status=RequirementStatus.REQUIRED,
-                reason="Low-confidence nationality requirement extraction; cannot enforce hard exclusion",
-                evidence=req.evidence,
-                confidence=req.confidence,
-            )
-
-        # If user nationality is missing -> UNKNOWN (not INELIGIBLE)
-        if not user_nationality or not str(user_nationality).strip():
-            return CriterionEvaluation(
-                category=category,
-                decision=EligibilityDecision.UNKNOWN,
-                requirement_status=RequirementStatus.REQUIRED,
-                reason="Opportunity requires specific nationality, but user nationality is not provided in profile",
-                evidence=req.evidence,
-                confidence=req.confidence,
-            )
-
-        user_nat_clean = str(user_nationality).strip()
-        user_nat_norm = norm.normalize_country(user_nat_clean)
-        user_nat_lower = user_nat_clean.lower()
-
-        val = req.value or {}
-        countries: list[str] = []
-        if isinstance(val, dict):
-            if "countries" in val and isinstance(val["countries"], list):
-                countries = [str(c).strip() for c in val["countries"] if str(c).strip()]
-            elif "description" in val:
-                desc = str(val["description"]).lower()
-                if user_nat_lower in desc or (
-                    user_nat_norm and user_nat_norm.lower() in desc
-                ):
-                    return CriterionEvaluation(
-                        category=category,
-                        decision=EligibilityDecision.ELIGIBLE,
-                        requirement_status=RequirementStatus.REQUIRED,
-                        reason=f"User nationality '{user_nationality}' matches required nationality criteria",
-                        evidence=req.evidence,
-                        confidence=req.confidence,
-                    )
-        elif isinstance(val, list):
-            countries = [str(c).strip() for c in val if str(c).strip()]
-
-        if countries:
-            matched = False
-            for item in countries:
-                item_clean = str(item).strip()
-                item_norm = norm.normalize_country(item_clean)
-                item_lower = item_clean.lower()
-                if (
-                    user_nat_norm
-                    and item_norm
-                    and user_nat_norm.lower() == item_norm.lower()
-                ):
-                    matched = True
-                    break
-                if user_nat_lower == item_lower:
-                    matched = True
-                    break
-
-            if matched:
-                return CriterionEvaluation(
-                    category=category,
-                    decision=EligibilityDecision.ELIGIBLE,
-                    requirement_status=RequirementStatus.REQUIRED,
-                    reason=f"User nationality '{user_nationality}' matches required nationalities: {countries}",
-                    evidence=req.evidence,
-                    confidence=req.confidence,
-                )
-            else:
-                return CriterionEvaluation(
-                    category=category,
-                    decision=EligibilityDecision.INELIGIBLE,
-                    requirement_status=RequirementStatus.REQUIRED,
-                    reason=f"User nationality '{user_nationality}' does not match required nationalities: {countries}",
-                    evidence=req.evidence,
-                    confidence=req.confidence,
-                )
-
-        if req.evidence and (
-            user_nat_lower in req.evidence.lower()
-            or (user_nat_norm and user_nat_norm.lower() in req.evidence.lower())
-        ):
-            return CriterionEvaluation(
-                category=category,
-                decision=EligibilityDecision.ELIGIBLE,
-                requirement_status=RequirementStatus.REQUIRED,
-                reason=f"User nationality '{user_nationality}' matches eligibility requirement evidence",
-                evidence=req.evidence,
-                confidence=req.confidence,
-            )
-
-        return CriterionEvaluation(
-            category=category,
-            decision=EligibilityDecision.INELIGIBLE,
-            requirement_status=RequirementStatus.REQUIRED,
-            reason=f"User nationality '{user_nationality}' does not match nationality requirement",
-            evidence=req.evidence,
-            confidence=req.confidence,
-        )
-
-    return CriterionEvaluation(
-        category=category,
-        decision=EligibilityDecision.UNKNOWN,
-        requirement_status=req.status,
-        reason="Nationality requirement status is undetermined",
-        evidence=req.evidence,
-        confidence=req.confidence,
-    )
-
-
-def _evaluate_single_education_req(
-    user_education_level: str | None,
-    req: ExtractedRequirement | None,
-    norm: NormalizationService,
-) -> CriterionEvaluation:
-    category = "education"
-    if req is None:
-        return CriterionEvaluation(
-            category=category,
-            decision=EligibilityDecision.ELIGIBLE,
-            requirement_status=RequirementStatus.NOT_REQUIRED,
-            reason="No explicit education level restriction found in opportunity",
-            evidence=None,
-            confidence=ConfidenceLevel.HIGH,
-        )
-
-    if req.status == RequirementStatus.UNKNOWN:
-        return CriterionEvaluation(
-            category=category,
-            decision=EligibilityDecision.UNKNOWN,
-            requirement_status=RequirementStatus.UNKNOWN,
-            reason="No explicit education level restriction found in opportunity",
-            evidence=req.evidence,
-            confidence=req.confidence,
-        )
-
-    if req.status == RequirementStatus.NOT_REQUIRED:
-        return CriterionEvaluation(
-            category=category,
-            decision=EligibilityDecision.ELIGIBLE,
-            requirement_status=RequirementStatus.NOT_REQUIRED,
-            reason="Opportunity explicitly has no degree level restrictions",
-            evidence=req.evidence,
-            confidence=req.confidence,
-        )
-
-    if req.status == RequirementStatus.REQUIRED:
-        # Handle compound conditions if present
-        if req.conditions and req.conditions.items:
-            cond_op = req.conditions.operator.upper()
-            cond_evals = [
-                _evaluate_single_education_req(
-                    user_education_level,
-                    (
-                        item
-                        if isinstance(item, ExtractedRequirement)
-                        else ExtractedRequirement(**item)
-                    ),
-                    norm,
-                )
-                for item in req.conditions.items
-            ]
-            if cond_op == "AND":
-                if any(
-                    c.decision == EligibilityDecision.INELIGIBLE for c in cond_evals
-                ):
-                    ineligible_c = next(
-                        c
-                        for c in cond_evals
-                        if c.decision == EligibilityDecision.INELIGIBLE
-                    )
-                    return CriterionEvaluation(
-                        category=category,
-                        decision=EligibilityDecision.INELIGIBLE,
-                        requirement_status=req.status,
-                        reason=ineligible_c.reason,
-                        evidence=req.evidence,
-                        confidence=req.confidence,
-                    )
-                elif all(
-                    c.decision == EligibilityDecision.ELIGIBLE for c in cond_evals
-                ):
-                    return CriterionEvaluation(
-                        category=category,
-                        decision=EligibilityDecision.ELIGIBLE,
-                        requirement_status=req.status,
-                        reason="All compound education requirements satisfied",
-                        evidence=req.evidence,
-                        confidence=req.confidence,
-                    )
-                else:
-                    unknown_c = next(
-                        (
-                            c
-                            for c in cond_evals
-                            if c.decision == EligibilityDecision.UNKNOWN
-                        ),
-                        None,
-                    )
-                    return CriterionEvaluation(
-                        category=category,
-                        decision=EligibilityDecision.UNKNOWN,
-                        requirement_status=req.status,
-                        reason=(
-                            unknown_c.reason
-                            if unknown_c
-                            else "Compound education requirements undetermined"
-                        ),
-                        evidence=req.evidence,
-                        confidence=req.confidence,
-                    )
-            elif cond_op == "OR":
-                if any(c.decision == EligibilityDecision.ELIGIBLE for c in cond_evals):
-                    eligible_c = next(
-                        c
-                        for c in cond_evals
-                        if c.decision == EligibilityDecision.ELIGIBLE
-                    )
-                    return CriterionEvaluation(
-                        category=category,
-                        decision=EligibilityDecision.ELIGIBLE,
-                        requirement_status=req.status,
-                        reason=eligible_c.reason,
-                        evidence=req.evidence,
-                        confidence=req.confidence,
-                    )
-                elif all(
-                    c.decision == EligibilityDecision.INELIGIBLE for c in cond_evals
-                ):
-                    return CriterionEvaluation(
-                        category=category,
-                        decision=EligibilityDecision.INELIGIBLE,
-                        requirement_status=req.status,
-                        reason="User does not satisfy any of the alternative education requirements",
-                        evidence=req.evidence,
-                        confidence=req.confidence,
-                    )
-                else:
-                    unknown_c = next(
-                        (
-                            c
-                            for c in cond_evals
-                            if c.decision == EligibilityDecision.UNKNOWN
-                        ),
-                        None,
-                    )
-                    return CriterionEvaluation(
-                        category=category,
-                        decision=EligibilityDecision.UNKNOWN,
-                        requirement_status=req.status,
-                        reason=(
-                            unknown_c.reason
-                            if unknown_c
-                            else "Alternative education requirements undetermined"
-                        ),
-                        evidence=req.evidence,
-                        confidence=req.confidence,
-                    )
-
-        if req.confidence == ConfidenceLevel.LOW:
-            return CriterionEvaluation(
-                category=category,
-                decision=EligibilityDecision.UNKNOWN,
-                requirement_status=RequirementStatus.REQUIRED,
-                reason="Low-confidence education requirement extraction; cannot enforce hard exclusion",
-                evidence=req.evidence,
-                confidence=req.confidence,
-            )
-
-        if not user_education_level or not str(user_education_level).strip():
-            return CriterionEvaluation(
-                category=category,
-                decision=EligibilityDecision.UNKNOWN,
-                requirement_status=RequirementStatus.REQUIRED,
-                reason="Opportunity requires specific degree level, but user education level is not provided in profile",
-                evidence=req.evidence,
-                confidence=req.confidence,
-            )
-
-        user_edu_clean = str(user_education_level).strip()
-        user_levels_norm = norm.normalize_study_levels(
-            [user_edu_clean.replace("_", " ")]
-        )
-
-        val = req.value or {}
-        degree_levels: list[str] = []
-        if isinstance(val, dict) and "degree_levels" in val:
-            degree_levels = val["degree_levels"]
-        elif isinstance(val, list):
-            degree_levels = val
-
-        norm_required = norm.normalize_study_levels(
-            [lvl.replace("_", " ") for lvl in degree_levels]
-        )
-        req_set = (
-            set(norm_required)
-            if norm_required
-            else {lvl.lower() for lvl in degree_levels}
-        )
-
-        matched = False
-        if user_levels_norm:
-            if any(lvl in req_set for lvl in user_levels_norm):
-                matched = True
-        else:
-            user_lower = user_edu_clean.lower()
-            valid_lower_set = {lvl.lower() for lvl in degree_levels}
-            if user_lower in valid_lower_set:
-                matched = True
-
-        if matched:
-            return CriterionEvaluation(
-                category=category,
-                decision=EligibilityDecision.ELIGIBLE,
-                requirement_status=RequirementStatus.REQUIRED,
-                reason=f"User education level '{user_education_level}' matches required study levels: {degree_levels}",
-                evidence=req.evidence,
-                confidence=req.confidence,
-            )
-        else:
-            return CriterionEvaluation(
-                category=category,
-                decision=EligibilityDecision.INELIGIBLE,
-                requirement_status=RequirementStatus.REQUIRED,
-                reason=f"User education level '{user_education_level}' does not match required study levels: {degree_levels}",
-                evidence=req.evidence,
-                confidence=req.confidence,
-            )
-
-    return CriterionEvaluation(
-        category=category,
-        decision=EligibilityDecision.UNKNOWN,
-        requirement_status=req.status,
-        reason="Education requirement status is undetermined",
-        evidence=req.evidence,
-        confidence=req.confidence,
-    )
-
-
-def evaluate_hard_filters(
-    user_profile: Any,
-    opportunity: Any,
-    normalizer: NormalizationService | None = None,
-) -> bool:
-    """Evaluates combined nationality and education hard filters for a user and opportunity.
-
-    Returns True if BOTH nationality and education filters pass; False otherwise.
-    Leaves user profile and opportunity objects unmutated.
-    """
-    if isinstance(user_profile, dict):
-        user_nat = user_profile.get("nationality")
-        user_edu = user_profile.get("education_level")
-    else:
-        user_nat = getattr(user_profile, "nationality", None)
-        user_edu = getattr(user_profile, "education_level", None)
-
-    if isinstance(opportunity, dict):
-        eligibility = opportunity.get("eligibility") or {}
-        eligible_nats = (
-            eligibility.get("eligible_nationalities")
-            if isinstance(eligibility, dict)
-            else None
-        )
-        study_levels = opportunity.get("study_levels")
-    else:
-        eligibility = getattr(opportunity, "eligibility", None) or {}
-        eligible_nats = (
-            eligibility.get("eligible_nationalities")
-            if isinstance(eligibility, dict)
-            else None
-        )
-        study_levels = getattr(opportunity, "study_levels", None)
-
-    nat_pass = passes_nationality_filter(user_nat, eligible_nats, normalizer=normalizer)
-    if not nat_pass:
-        return False
-
-    edu_pass = passes_education_filter(user_edu, study_levels, normalizer=normalizer)
-    if not edu_pass:
-        return False
-
-    return True
-
-
-def filter_by_hard_eligibility(
-    user_profile: Any,
-    opportunities: list[Any],
-    normalizer: NormalizationService | None = None,
-) -> list[Any]:
-    """Filters a collection of opportunities, returning only those passing hard eligibility filters.
-
-    Does NOT mutate input objects.
-    """
-    norm = normalizer or NormalizationService()
-    return [
-        opp
-        for opp in opportunities
-        if evaluate_hard_filters(user_profile, opp, normalizer=norm)
-    ]
-
-
 class HardFilterService:
-    """Service providing deterministic nationality and strict education-level hard filtering."""
+    """Service evaluating all REQUIRED criteria as binary hard eligibility gates.
+
+    Enforces the semantic contract:
+    - REQUIRED = mandatory eligibility requirement.
+    - Fails REQUIRED criteria -> INELIGIBLE (is_eligible = False).
+    - Passes REQUIRED criteria -> ELIGIBLE.
+    - Missing user data / uncomputable -> UNKNOWN (is_eligible = True, NOT excluded).
+    """
 
     def __init__(
         self,
         normalization_service: NormalizationService | None = None,
         requirement_extractor: RequirementExtractor | None = None,
     ) -> None:
-        self.normalizer = normalization_service or NormalizationService()
-        self.extractor = requirement_extractor or RequirementExtractor(
-            normalization_service=self.normalizer
-        )
-
-    def passes_nationality(
-        self,
-        user_nationality: str | None,
-        eligible_nationalities: list[str] | str | None,
-    ) -> bool:
-        return passes_nationality_filter(
-            user_nationality, eligible_nationalities, normalizer=self.normalizer
-        )
-
-    def passes_education(
-        self,
-        user_education_level: str | None,
-        required_study_levels: list[str] | str | None,
-    ) -> bool:
-        return passes_education_filter(
-            user_education_level,
-            required_study_levels,
-            normalizer=self.normalizer,
-        )
+        self._norm = normalization_service or NormalizationService()
+        self._extractor = requirement_extractor or RequirementExtractor(self._norm)
 
     def evaluate_detailed(
         self,
-        user_profile: Any,
-        opportunity_or_requirements: Any,
+        user_profile: UserProfileDTO,
+        opportunity_or_requirements: dict[str, Any] | OpportunityRequirementsDTO,
     ) -> HardFilterResultDTO:
-        """Evaluates structured hard requirements (nationality and education) for a user.
+        """Evaluates all REQUIRED criteria for a user.
 
-        Produces an explainable HardFilterResultDTO with explicit decision
-        (ELIGIBLE, INELIGIBLE, UNKNOWN), criteria evaluations, and failure/unknown reasons.
-        Missing user data or missing opportunity requirements result in UNKNOWN,
+        Produces an explainable HardFilterResultDTO.
+        Missing user data or uncomputable requirements result in UNKNOWN,
         which does NOT cause hard exclusion (is_eligible = True).
         """
-        if isinstance(user_profile, dict):
-            user_nat = user_profile.get("nationality")
-            user_edu = user_profile.get("education_level")
-        else:
-            user_nat = getattr(user_profile, "nationality", None)
-            user_edu = getattr(user_profile, "education_level", None)
-
         if isinstance(opportunity_or_requirements, OpportunityRequirementsDTO):
-            req_dto = opportunity_or_requirements
+            reqs = opportunity_or_requirements
         else:
-            req_dto = self.extractor.extract_requirements(opportunity_or_requirements)
+            reqs = self._extractor.extract(opportunity_or_requirements)
 
-        # 1. Evaluate Nationality
-        nat_req = req_dto.get_first_by_category("nationality")
-        # Ensure only ELIGIBILITY requirement type is hard-filtered
-        if nat_req and nat_req.requirement_type != RequirementType.ELIGIBILITY:
-            nat_eval = CriterionEvaluation(
-                category="nationality",
-                decision=EligibilityDecision.UNKNOWN,
-                requirement_status=RequirementStatus.UNKNOWN,
-                reason="Non-eligibility nationality requirement ignored for hard filtering",
-                evidence=nat_req.evidence,
-                confidence=nat_req.confidence,
-            )
-        else:
-            nat_eval = _evaluate_single_nationality_req(
-                user_nat, nat_req, self.normalizer
-            )
+        criteria: list[CriterionEvaluation] = []
+        failure_reasons: list[str] = []
+        unknown_reasons: list[str] = []
 
-        # 2. Evaluate Education
-        edu_req = req_dto.get_first_by_category("education")
-        if edu_req and edu_req.requirement_type != RequirementType.ELIGIBILITY:
-            edu_eval = CriterionEvaluation(
-                category="education",
-                decision=EligibilityDecision.UNKNOWN,
-                requirement_status=RequirementStatus.UNKNOWN,
-                reason="Non-eligibility education requirement ignored for hard filtering",
-                evidence=edu_req.evidence,
-                confidence=edu_req.confidence,
-            )
-        else:
-            edu_eval = _evaluate_single_education_req(
-                user_edu, edu_req, self.normalizer
-            )
+        # Evaluate every extracted requirement with REQUIRED status
+        for req in reqs.requirements:
+            if req.status != RequirementStatus.REQUIRED:
+                continue  # PREFERRED, NOT_REQUIRED, UNKNOWN are soft or neutral
 
-        criteria: dict[str, CriterionEvaluation] = {
-            "nationality": nat_eval,
-            "education": edu_eval,
-        }
+            ev = self._evaluate_single_required_criterion(user_profile, req)
+            criteria.append(ev)
 
-        failure_reasons = [
-            c.reason
-            for c in criteria.values()
-            if c.decision == EligibilityDecision.INELIGIBLE
-        ]
-        unknown_reasons = [
-            c.reason
-            for c in criteria.values()
-            if c.decision == EligibilityDecision.UNKNOWN
-        ]
+            if ev.decision == EligibilityDecision.INELIGIBLE:
+                failure_reasons.append(ev.reason)
+            elif ev.decision == EligibilityDecision.UNKNOWN:
+                unknown_reasons.append(ev.reason)
 
-        if any(c.decision == EligibilityDecision.INELIGIBLE for c in criteria.values()):
-            overall_decision = EligibilityDecision.INELIGIBLE
+        if failure_reasons:
+            decision = EligibilityDecision.INELIGIBLE
             is_eligible = False
-        elif all(c.decision == EligibilityDecision.ELIGIBLE for c in criteria.values()):
-            overall_decision = EligibilityDecision.ELIGIBLE
+        elif unknown_reasons and not any(
+            ev.decision == EligibilityDecision.ELIGIBLE for ev in criteria
+        ):
+            decision = EligibilityDecision.UNKNOWN
             is_eligible = True
         else:
-            overall_decision = EligibilityDecision.UNKNOWN
-            is_eligible = True  # UNKNOWN does not cause hard exclusion
+            decision = EligibilityDecision.ELIGIBLE
+            is_eligible = True
 
         return HardFilterResultDTO(
-            decision=overall_decision,
             is_eligible=is_eligible,
+            decision=decision,
             criteria=criteria,
             failure_reasons=failure_reasons,
             unknown_reasons=unknown_reasons,
-            requirements=req_dto,
         )
 
-    def evaluate(self, user_profile: Any, opportunity: Any) -> bool:
-        return evaluate_hard_filters(
-            user_profile, opportunity, normalizer=self.normalizer
-        )
+    def evaluate(
+        self,
+        user_profile: UserProfileDTO,
+        opportunity: dict[str, Any],
+    ) -> bool:
+        """Returns True when user passes hard eligibility."""
+        result = self.evaluate_detailed(user_profile, opportunity)
+        return result.is_eligible
 
     def filter_opportunities(
-        self, user_profile: Any, opportunities: list[Any]
-    ) -> list[Any]:
-        return filter_by_hard_eligibility(
-            user_profile, opportunities, normalizer=self.normalizer
+        self,
+        user_profile: UserProfileDTO,
+        opportunities: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Filters opportunities, returning only those passing hard eligibility."""
+        return [opp for opp in opportunities if self.evaluate(user_profile, opp)]
+
+    # ------------------------------------------------------------------
+    # Private evaluation of individual REQUIRED requirements
+    # ------------------------------------------------------------------
+
+    def _evaluate_single_required_criterion(
+        self,
+        user_profile: UserProfileDTO,
+        req: ExtractedRequirement,
+    ) -> CriterionEvaluation:
+        if req.confidence == ConfidenceLevel.LOW:
+            return CriterionEvaluation(
+                criterion=req.req_type,
+                decision=EligibilityDecision.UNKNOWN,
+                reason=f"Low-confidence {req.req_type} requirement extraction; cannot enforce hard exclusion",
+                requirement=req,
+            )
+
+        if req.req_type == RequirementType.NATIONALITY:
+            return self._eval_nationality(user_profile.nationality, req)
+        elif req.req_type == RequirementType.EDUCATION:
+            return self._eval_education(user_profile.education_level, req)
+        elif req.req_type == RequirementType.GPA:
+            return self._eval_gpa(user_profile, req)
+        elif req.req_type == RequirementType.AGE:
+            return self._eval_age(user_profile, req)
+        elif req.req_type == RequirementType.LANGUAGE:
+            return self._eval_language(user_profile, req)
+        elif req.req_type == RequirementType.EXPERIENCE:
+            return self._eval_experience(user_profile, req)
+        elif req.req_type == RequirementType.FINANCIAL_NEED:
+            return self._eval_financial_need(user_profile, req)
+        elif req.req_type == RequirementType.FIELD_OF_STUDY:
+            return self._eval_field_of_study(user_profile, req)
+
+        return CriterionEvaluation(
+            criterion=req.req_type,
+            decision=EligibilityDecision.UNKNOWN,
+            reason=f"REQUIRED requirement type '{req.req_type}' cannot be reliably evaluated from UserProfileDTO",
+            requirement=req,
+        )
+
+    def _eval_nationality(
+        self,
+        user_nationality: str | None,
+        req: ExtractedRequirement,
+    ) -> CriterionEvaluation:
+        if not user_nationality:
+            return CriterionEvaluation(
+                criterion="nationality",
+                decision=EligibilityDecision.UNKNOWN,
+                reason="REQUIRED nationality specified, but user nationality is missing from profile",
+                requirement=req,
+            )
+
+        if req.value == "open_to_all":
+            return CriterionEvaluation(
+                criterion="nationality",
+                decision=EligibilityDecision.ELIGIBLE,
+                reason="Open to all nationalities",
+                requirement=req,
+            )
+
+        norm_user = (
+            self._norm.normalize_country(user_nationality) or user_nationality
+        ).lower()
+        countries: list[str] = (
+            req.value if isinstance(req.value, list) else [str(req.value)]
+        )
+
+        if req.condition == RequirementCondition.NOT_IN:
+            excluded_lower = [c.lower() for c in countries]
+            if norm_user in excluded_lower:
+                return CriterionEvaluation(
+                    criterion="nationality",
+                    decision=EligibilityDecision.INELIGIBLE,
+                    reason=f"User nationality '{user_nationality}' matches excluded nationality criteria",
+                    requirement=req,
+                )
+            return CriterionEvaluation(
+                criterion="nationality",
+                decision=EligibilityDecision.ELIGIBLE,
+                reason=f"User nationality '{user_nationality}' satisfies nationality requirement",
+                requirement=req,
+            )
+
+        normalized_countries = [
+            (self._norm.normalize_country(c) or c).lower() for c in countries
+        ]
+        for tok in OPEN_TO_ALL_NATIONALITIES:
+            if tok in [c.lower() for c in countries]:
+                return CriterionEvaluation(
+                    criterion="nationality",
+                    decision=EligibilityDecision.ELIGIBLE,
+                    reason="Open to all nationalities",
+                    requirement=req,
+                )
+
+        if norm_user in normalized_countries:
+            return CriterionEvaluation(
+                criterion="nationality",
+                decision=EligibilityDecision.ELIGIBLE,
+                reason=f"User nationality '{user_nationality}' matches required nationalities: {countries[:5]}",
+                requirement=req,
+            )
+
+        return CriterionEvaluation(
+            criterion="nationality",
+            decision=EligibilityDecision.INELIGIBLE,
+            reason=f"User nationality '{user_nationality}' does not match required nationalities: {countries[:5]}",
+            requirement=req,
+        )
+
+    def _eval_education(
+        self,
+        user_education_level: str | None,
+        req: ExtractedRequirement,
+    ) -> CriterionEvaluation:
+        if not user_education_level:
+            return CriterionEvaluation(
+                criterion="education",
+                decision=EligibilityDecision.UNKNOWN,
+                reason="REQUIRED degree level specified, but user education level is missing from profile",
+                requirement=req,
+            )
+
+        degree_levels: list[str] = (
+            req.value if isinstance(req.value, list) else [str(req.value)]
+        )
+        normalized_levels = self._norm.normalize_study_levels(degree_levels)
+
+        if not normalized_levels:
+            return CriterionEvaluation(
+                criterion="education",
+                decision=EligibilityDecision.UNKNOWN,
+                reason="No explicit study levels extracted",
+                requirement=req,
+            )
+
+        user_rank = _LEVEL_RANK.get(user_education_level, -1)
+
+        for required_level in normalized_levels:
+            req_rank = _LEVEL_RANK.get(required_level, -1)
+            if req_rank < 0:
+                continue
+            if user_rank >= req_rank - 1:
+                return CriterionEvaluation(
+                    criterion="education",
+                    decision=EligibilityDecision.ELIGIBLE,
+                    reason=f"User education level '{user_education_level}' satisfies required study levels: {normalized_levels}",
+                    requirement=req,
+                )
+
+        return CriterionEvaluation(
+            criterion="education",
+            decision=EligibilityDecision.INELIGIBLE,
+            reason=f"User education level '{user_education_level}' does not meet required study levels: {normalized_levels}",
+            requirement=req,
+        )
+
+    def _eval_gpa(
+        self,
+        user_profile: UserProfileDTO,
+        req: ExtractedRequirement,
+    ) -> CriterionEvaluation:
+        user_gpas = [
+            edu.gpa_normalized_4
+            for edu in user_profile.educations
+            if edu.gpa_normalized_4 is not None
+        ]
+        if not user_gpas:
+            return CriterionEvaluation(
+                criterion="gpa",
+                decision=EligibilityDecision.UNKNOWN,
+                reason="REQUIRED GPA threshold specified, but user GPA is missing from profile",
+                requirement=req,
+            )
+
+        user_highest = max(user_gpas)
+        val = req.value
+
+        if isinstance(val, dict):
+            req_type = val.get("type", "")
+            if req_type in ("QUALITATIVE", "HONORS"):
+                return CriterionEvaluation(
+                    criterion="gpa",
+                    decision=EligibilityDecision.UNKNOWN,
+                    reason=f"Qualitative REQUIRED GPA '{val.get('honors') or val.get('text')}' cannot be converted without approved taxonomy",
+                    requirement=req,
+                )
+
+            min_gpa = val.get("min_gpa_normalized_4")
+            if min_gpa is not None:
+                if user_highest >= min_gpa:
+                    return CriterionEvaluation(
+                        criterion="gpa",
+                        decision=EligibilityDecision.ELIGIBLE,
+                        reason=f"User GPA ({user_highest:.2f}) meets required GPA threshold ({min_gpa:.2f})",
+                        requirement=req,
+                    )
+                return CriterionEvaluation(
+                    criterion="gpa",
+                    decision=EligibilityDecision.INELIGIBLE,
+                    reason=f"User GPA ({user_highest:.2f}) is below required GPA threshold ({min_gpa:.2f})",
+                    requirement=req,
+                )
+
+        return CriterionEvaluation(
+            criterion="gpa",
+            decision=EligibilityDecision.UNKNOWN,
+            reason="GPA requirement value structure not recognized",
+            requirement=req,
+        )
+
+    def _eval_age(
+        self,
+        user_profile: UserProfileDTO,
+        req: ExtractedRequirement,
+    ) -> CriterionEvaluation:
+        if user_profile.date_of_birth is None:
+            return CriterionEvaluation(
+                criterion="age",
+                decision=EligibilityDecision.UNKNOWN,
+                reason="REQUIRED age limit specified, but user date_of_birth is missing from profile",
+                requirement=req,
+            )
+
+        today = date.today()
+        dob = user_profile.date_of_birth
+        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+
+        val = req.value
+        if isinstance(val, dict):
+            max_age = val.get("maximum")
+            min_age = val.get("minimum")
+
+            if max_age is not None and min_age is not None:
+                if min_age <= age <= max_age:
+                    return CriterionEvaluation(
+                        criterion="age",
+                        decision=EligibilityDecision.ELIGIBLE,
+                        reason=f"User age ({age}) is within required age range [{min_age}-{max_age}]",
+                        requirement=req,
+                    )
+                return CriterionEvaluation(
+                    criterion="age",
+                    decision=EligibilityDecision.INELIGIBLE,
+                    reason=f"User age ({age}) is outside required age range [{min_age}-{max_age}]",
+                    requirement=req,
+                )
+
+            if max_age is not None:
+                if age <= max_age:
+                    return CriterionEvaluation(
+                        criterion="age",
+                        decision=EligibilityDecision.ELIGIBLE,
+                        reason=f"User age ({age}) meets maximum age limit ({max_age})",
+                        requirement=req,
+                    )
+                return CriterionEvaluation(
+                    criterion="age",
+                    decision=EligibilityDecision.INELIGIBLE,
+                    reason=f"User age ({age}) exceeds maximum age limit ({max_age})",
+                    requirement=req,
+                )
+
+            if min_age is not None:
+                if age >= min_age:
+                    return CriterionEvaluation(
+                        criterion="age",
+                        decision=EligibilityDecision.ELIGIBLE,
+                        reason=f"User age ({age}) meets minimum age limit ({min_age})",
+                        requirement=req,
+                    )
+                return CriterionEvaluation(
+                    criterion="age",
+                    decision=EligibilityDecision.INELIGIBLE,
+                    reason=f"User age ({age}) is below minimum age limit ({min_age})",
+                    requirement=req,
+                )
+
+        return CriterionEvaluation(
+            criterion="age",
+            decision=EligibilityDecision.UNKNOWN,
+            reason="Age requirement value structure not recognized",
+            requirement=req,
+        )
+
+    def _eval_language(
+        self,
+        user_profile: UserProfileDTO,
+        req: ExtractedRequirement,
+    ) -> CriterionEvaluation:
+        val = req.value
+        if isinstance(val, str) and val == "no_certificate_required":
+            return CriterionEvaluation(
+                criterion="language",
+                decision=EligibilityDecision.ELIGIBLE,
+                reason="Language certificate waived/not required",
+                requirement=req,
+            )
+
+        if isinstance(val, dict):
+            tests = val.get("tests", [])
+            if tests:
+                for test_item in tests:
+                    test_name = str(test_item.get("test", "")).upper()
+                    min_score = test_item.get("min_score")
+                    if min_score is None:
+                        continue
+                    for tr in user_profile.test_results:
+                        if (
+                            tr.test_name
+                            and tr.test_name.upper() == test_name
+                            and tr.score is not None
+                        ):
+                            if tr.score >= min_score:
+                                return CriterionEvaluation(
+                                    criterion="language",
+                                    decision=EligibilityDecision.ELIGIBLE,
+                                    reason=f"User {test_name} score ({tr.score}) meets required minimum ({min_score})",
+                                    requirement=req,
+                                )
+                            return CriterionEvaluation(
+                                criterion="language",
+                                decision=EligibilityDecision.INELIGIBLE,
+                                reason=f"User {test_name} score ({tr.score}) is below required minimum ({min_score})",
+                                requirement=req,
+                            )
+
+            user_langs = [
+                lang.name.lower() for lang in user_profile.languages if lang.name
+            ]
+            if not user_langs and not user_profile.test_results:
+                return CriterionEvaluation(
+                    criterion="language",
+                    decision=EligibilityDecision.UNKNOWN,
+                    reason="REQUIRED language test specified, but user test results are missing from profile",
+                    requirement=req,
+                )
+
+        return CriterionEvaluation(
+            criterion="language",
+            decision=EligibilityDecision.UNKNOWN,
+            reason="REQUIRED language requirement cannot be determined from available profile data",
+            requirement=req,
+        )
+
+    def _eval_experience(
+        self,
+        user_profile: UserProfileDTO,
+        req: ExtractedRequirement,
+    ) -> CriterionEvaluation:
+        if req.value == "no_experience_required":
+            return CriterionEvaluation(
+                criterion="experience",
+                decision=EligibilityDecision.ELIGIBLE,
+                reason="Experience explicitly not required",
+                requirement=req,
+            )
+
+        if not user_profile.experiences:
+            return CriterionEvaluation(
+                criterion="experience",
+                decision=EligibilityDecision.UNKNOWN,
+                reason="REQUIRED experience specified, but user profile experiences list is empty/missing",
+                requirement=req,
+            )
+
+        val = req.value
+        req_area = "relevant_experience"
+        if isinstance(val, dict):
+            req_area = str(val.get("area") or "relevant_experience")
+        elif isinstance(val, str):
+            req_area = val
+
+        if _user_has_matching_experience_area(user_profile, req_area):
+            return CriterionEvaluation(
+                criterion="experience",
+                decision=EligibilityDecision.ELIGIBLE,
+                reason=f"User experiences match required experience area '{req_area}'",
+                requirement=req,
+            )
+
+        return CriterionEvaluation(
+            criterion="experience",
+            decision=EligibilityDecision.INELIGIBLE,
+            reason=f"User experiences {user_profile.experiences[:3]} do not match required experience area '{req_area}'",
+            requirement=req,
+        )
+
+    def _eval_financial_need(
+        self,
+        user_profile: UserProfileDTO,
+        req: ExtractedRequirement,
+    ) -> CriterionEvaluation:
+        if user_profile.has_financial_need is None:
+            return CriterionEvaluation(
+                criterion="financial_need",
+                decision=EligibilityDecision.UNKNOWN,
+                reason="REQUIRED financial need specified, but user has_financial_need is missing from profile",
+                requirement=req,
+            )
+        if user_profile.has_financial_need:
+            return CriterionEvaluation(
+                criterion="financial_need",
+                decision=EligibilityDecision.ELIGIBLE,
+                reason="User has_financial_need=True satisfies requirement",
+                requirement=req,
+            )
+        return CriterionEvaluation(
+            criterion="financial_need",
+            decision=EligibilityDecision.INELIGIBLE,
+            reason="User has_financial_need=False fails required financial need criterion",
+            requirement=req,
+        )
+
+    def _eval_field_of_study(
+        self,
+        user_profile: UserProfileDTO,
+        req: ExtractedRequirement,
+    ) -> CriterionEvaluation:
+        if req.value == "open_to_all":
+            return CriterionEvaluation(
+                criterion="field_of_study",
+                decision=EligibilityDecision.ELIGIBLE,
+                reason="Field of study open to all",
+                requirement=req,
+            )
+        user_fields = [f.name.lower() for f in user_profile.fields_of_study if f.name]
+        user_majors = [e.major.lower() for e in user_profile.educations if e.major]
+        all_user_disciplines = user_fields + user_majors
+
+        if not all_user_disciplines:
+            return CriterionEvaluation(
+                criterion="field_of_study",
+                decision=EligibilityDecision.UNKNOWN,
+                reason="REQUIRED field of study specified, but user fields_of_study and majors are missing from profile",
+                requirement=req,
+            )
+
+        req_fields = req.value if isinstance(req.value, list) else [str(req.value)]
+        for rfield in req_fields:
+            rf_lower = str(rfield).lower()
+            for udisc in all_user_disciplines:
+                if rf_lower == udisc:
+                    return CriterionEvaluation(
+                        criterion="field_of_study",
+                        decision=EligibilityDecision.ELIGIBLE,
+                        reason=f"User field/major '{udisc}' exactly matches required field '{rfield}'",
+                        requirement=req,
+                    )
+
+        return CriterionEvaluation(
+            criterion="field_of_study",
+            decision=EligibilityDecision.INELIGIBLE,
+            reason=f"User fields {all_user_disciplines[:3]} do not match required fields {req_fields[:3]}",
+            requirement=req,
         )

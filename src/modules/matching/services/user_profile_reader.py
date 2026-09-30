@@ -26,6 +26,7 @@ SELECT
     career_goals,
     profile_photo_url,
     completion_pct,
+    is_matchable,
     preferences,
     is_draft,
     skills,
@@ -97,10 +98,14 @@ class UserProfileReader:
             user_uuid_str = str(user_id)
 
         client = await self.get_client()
-        rows: list[dict[str, Any]] = await client.query_raw(
-            SELECT_USER_PROFILE_QUERY,
-            user_uuid_str,
-        )
+        try:
+            rows: list[dict[str, Any]] = await client.query_raw(
+                SELECT_USER_PROFILE_QUERY,
+                user_uuid_str,
+            )
+        except Exception as exc:
+            logger.error("Failed to query user profile for %s: %s", user_uuid_str, exc)
+            return None
 
         if not rows:
             return None
