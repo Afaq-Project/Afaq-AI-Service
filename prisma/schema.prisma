@@ -79,7 +79,8 @@ model CleanedOpportunity {
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
-  match_scores MatchScore[]
+  match_scores  MatchScore[]
+  conversations Conversation[]
 
   @@map("cleaned_opportunities")
 }
@@ -98,6 +99,42 @@ model MatchScore {
 
   @@unique([user_id, opportunity_id])
   @@map("match_scores")
+}
+
+model Conversation {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id        String             @db.Uuid
+  opportunity_id String             @map("opportunity_id") @db.Uuid
+  opportunity    CleanedOpportunity @relation(fields: [opportunity_id], references: [id])
+  application_id String?            @db.Uuid
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  messages ConversationMessage[]
+
+  @@index([user_id, opportunity_id])
+  @@map("conversations")
+}
+
+model ConversationMessage {
+  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversation_id String       @map("conversation_id") @db.Uuid
+  conversation    Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+
+  role           String  @db.Text
+  content        String  @db.Text
+  status         String  @default("ok") @db.Text
+  decline_reason String? @db.Text
+  model          String? @db.Text
+  input_tokens   Int?
+  output_tokens  Int?
+  latency_ms     Int?
+
+  created_at DateTime @default(now())
+
+  @@index([conversation_id, created_at])
+  @@map("conversation_messages")
 }
 
 model ApiKey {

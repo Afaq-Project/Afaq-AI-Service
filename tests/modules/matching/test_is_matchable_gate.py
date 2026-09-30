@@ -56,9 +56,9 @@ def _make_profile(
         is_matchable=is_matchable,
         completion_pct=completion_pct,
         has_financial_need=has_financial_need,
-        experiences=experiences
-        if experiences is not None
-        else ["Research assistant in ML"],
+        experiences=(
+            experiences if experiences is not None else ["Research assistant in ML"]
+        ),
         languages=[LanguageDTO(name="English", proficiency="Upper Intermediate")],
         educations=[
             EducationDTO(

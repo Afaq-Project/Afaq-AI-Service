@@ -199,17 +199,21 @@ class RequirementExtractor:
                 results.append(
                     ExtractedRequirement(
                         req_type=RequirementType.NATIONALITY,
-                        status=RequirementStatus.REQUIRED
-                        if not is_open
-                        else RequirementStatus.NOT_REQUIRED,
+                        status=(
+                            RequirementStatus.REQUIRED
+                            if not is_open
+                            else RequirementStatus.NOT_REQUIRED
+                        ),
                         condition=RequirementCondition.IN if not is_open else None,
                         value=countries if not is_open else "open_to_all",
                         raw_value=_clean_span(
                             eligibility_text or full_text, m.start(), m.end()
                         ),
-                        description=f"Eligible nationalities: {', '.join(countries[:5])}"
-                        if not is_open
-                        else "Open to all nationalities",
+                        description=(
+                            f"Eligible nationalities: {', '.join(countries[:5])}"
+                            if not is_open
+                            else "Open to all nationalities"
+                        ),
                         confidence=ConfidenceLevel.HIGH,
                     )
                 )
@@ -570,8 +574,8 @@ class RequirementExtractor:
         general_lang_pattern = re.compile(
             r"(?i)\b(?:proof\s+of\s+|demonstrate\s+)?(?:english\s+(?:or\s+[a-z]+\s+)?proficiency|english\s+language\s+proficiency|proficiency\s+in\s+english|language\s+(?:proficiency\s+)?certificates?|language\s+requirements?)\b"
         )
-        m = general_lang_pattern.search(full_text)
-        if m:
+        lang_match = general_lang_pattern.search(full_text)
+        if lang_match:
             results.append(
                 ExtractedRequirement(
                     req_type=RequirementType.LANGUAGE,
@@ -582,7 +586,9 @@ class RequirementExtractor:
                         "min_proficiency": "proficient",
                         "category": "English",
                     },
-                    raw_value=_clean_span(full_text, m.start(), m.end()),
+                    raw_value=_clean_span(
+                        full_text, lang_match.start(), lang_match.end()
+                    ),
                     description="English language proficiency required (no specific test score)",
                     confidence=ConfidenceLevel.MEDIUM,
                 )
@@ -664,16 +670,20 @@ class RequirementExtractor:
                 results.append(
                     ExtractedRequirement(
                         req_type=RequirementType.EXPERIENCE,
-                        status=RequirementStatus.PREFERRED
-                        if is_preferred
-                        else RequirementStatus.REQUIRED,
+                        status=(
+                            RequirementStatus.PREFERRED
+                            if is_preferred
+                            else RequirementStatus.REQUIRED
+                        ),
                         condition=None,
                         value={"area": area_name},
                         raw_value=snippet,
                         description=f"{area_name.title()} experience {'preferred' if is_preferred else 'required'}",
-                        confidence=ConfidenceLevel.HIGH
-                        if not is_preferred
-                        else ConfidenceLevel.MEDIUM,
+                        confidence=(
+                            ConfidenceLevel.HIGH
+                            if not is_preferred
+                            else ConfidenceLevel.MEDIUM
+                        ),
                     )
                 )
                 return results
@@ -803,18 +813,22 @@ class RequirementExtractor:
             return [
                 ExtractedRequirement(
                     req_type=RequirementType.FINANCIAL_NEED,
-                    status=RequirementStatus.REQUIRED
-                    if is_required
-                    else RequirementStatus.PREFERRED,
+                    status=(
+                        RequirementStatus.REQUIRED
+                        if is_required
+                        else RequirementStatus.PREFERRED
+                    ),
                     condition=RequirementCondition.EQ,
                     value="financial_need_required",
                     raw_value=_clean_span(full_text, m.start(), m.end()),
-                    description="Financial need required"
-                    if is_required
-                    else "Financial need preferred",
-                    confidence=ConfidenceLevel.HIGH
-                    if is_required
-                    else ConfidenceLevel.MEDIUM,
+                    description=(
+                        "Financial need required"
+                        if is_required
+                        else "Financial need preferred"
+                    ),
+                    confidence=(
+                        ConfidenceLevel.HIGH if is_required else ConfidenceLevel.MEDIUM
+                    ),
                 )
             ]
 

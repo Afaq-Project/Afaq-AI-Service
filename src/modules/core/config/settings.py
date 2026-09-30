@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     main_service_webhook_secret: str = ""
     webhook_timeout: float = 15.0
 
+    anthropic_api_key: str = ""
+    ai_model: str = "claude-opus-5"
+    ai_timeout_seconds: float = 120.0
+    ai_max_retries: int = 1
+    ai_chat_max_tokens: int = 4096
+    ai_review_max_tokens: int = 8192
+    ai_history_limit: int = 20
+    ai_refusal_fallbacks: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:
