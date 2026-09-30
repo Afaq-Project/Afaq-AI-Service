@@ -1,6 +1,6 @@
 import logging
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from prisma import Json, Prisma
 
@@ -63,6 +63,58 @@ class OpportunityRepository:
     async def get_cleaned_by_id(self, opportunity_id: str) -> Any | None:
         return await self._db.cleanedopportunity.find_unique(
             where={"id": opportunity_id}
+        )
+
+    async def search_visible(
+        self,
+        query: str = "",
+        opportunity_type: str | None = None,
+        country: str | None = None,
+        funding_type: str | None = None,
+        study_level: str | None = None,
+        limit: int = 5,
+        now: datetime | None = None,
+        retention_days: int = 30,
+    ) -> list[Any]:
+        cutoff = (now or datetime.now(UTC)) - timedelta(days=retention_days)
+        conditions: list[dict[str, Any]] = [
+            {"status": "cleaned"},
+            {"OR": [{"deadline": {"gte": cutoff}}, {"deadline": None}]},
+        ]
+
+        text = query.strip()
+        if text:
+            conditions.append(
+                {
+                    "OR": [
+                        {"title": {"contains": text, "mode": "insensitive"}},
+                        {"description": {"contains": text, "mode": "insensitive"}},
+                        {"organization": {"contains": text, "mode": "insensitive"}},
+                    ]
+                }
+            )
+        if opportunity_type:
+            conditions.append(
+                {
+                    "opportunity_type": {
+                        "equals": opportunity_type,
+                        "mode": "insensitive",
+                    }
+                }
+            )
+        if country:
+            conditions.append({"country": {"contains": country, "mode": "insensitive"}})
+        if funding_type:
+            conditions.append(
+                {"funding_type": {"equals": funding_type, "mode": "insensitive"}}
+            )
+        if study_level:
+            conditions.append({"study_levels": {"has": study_level}})
+
+        return await self._db.cleanedopportunity.find_many(
+            where=cast(Any, {"AND": conditions}),
+            order=cast(Any, [{"deadline": "asc"}, {"created_at": "desc"}]),
+            take=max(1, min(limit, 20)),
         )
 
     async def exists_by_content_hash(self, content_hash: str) -> bool:

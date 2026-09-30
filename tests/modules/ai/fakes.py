@@ -2,6 +2,9 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import AIMessage, ToolMessage
+
 from src.modules.infrastructure.llm.base import StructuredCompletion
 
 
@@ -32,9 +35,65 @@ class FakeOpportunityRepository:
 
     def __init__(self, opportunities: list[SimpleNamespace] | None = None) -> None:
         self._items = {o.id: o for o in (opportunities or [])}
+        self.searches: list[dict[str, Any]] = []
+        self.search_error: Exception | None = None
 
     async def get_cleaned_by_id(self, opportunity_id: str) -> SimpleNamespace | None:
         return self._items.get(opportunity_id)
+
+    async def search_visible(self, **kwargs: Any) -> list[SimpleNamespace]:
+        self.searches.append(kwargs)
+        if self.search_error is not None:
+            raise self.search_error
+        query = (kwargs.get("query") or "").strip().casefold()
+        found = [
+            item
+            for item in self._items.values()
+            if not query or query in str(item.title).casefold()
+        ]
+        return found[: kwargs.get("limit") or 5]
+
+
+class FakeMatchScoreRepository:
+
+    def __init__(self, scores: dict[str, list[SimpleNamespace]] | None = None) -> None:
+        self._scores = scores or {}
+        self.calls: list[tuple[str, str]] = []
+
+    async def get_for_user(self, user_id: str, opportunity_id: str) -> Any | None:
+        self.calls.append((user_id, opportunity_id))
+        return next(
+            (
+                s
+                for s in self._scores.get(user_id, [])
+                if s.opportunity_id == opportunity_id
+            ),
+            None,
+        )
+
+    async def top_for_user(self, user_id: str, limit: int = 5) -> list[Any]:
+        self.calls.append((user_id, f"top:{limit}"))
+        ranked = sorted(
+            self._scores.get(user_id, []), key=lambda s: s.score_pct, reverse=True
+        )
+        return ranked[:limit]
+
+
+def make_score(
+    opportunity_id: str = "opp-1",
+    score_pct: int = 72,
+    title: str = "Chevening Scholarship",
+    **overrides: Any,
+) -> SimpleNamespace:
+    data: dict[str, Any] = {
+        "opportunity_id": opportunity_id,
+        "score_pct": score_pct,
+        "score_breakdown": {"field_of_study": 80, "skills": 65},
+        "calculated_at": datetime(2026, 9, 1, tzinfo=UTC),
+        "opportunity": SimpleNamespace(title=title),
+    }
+    data.update(overrides)
+    return SimpleNamespace(**data)
 
 
 class FakeConversationRepository:
@@ -118,6 +177,32 @@ class FakeConversationRepository:
         return [m for m in self.messages if m.role == role]
 
 
+class ToolCallingFakeModel(GenericFakeChatModel):
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "ToolCallingFakeModel":
+        return self
+
+
+def model_calling(
+    *calls: tuple[str, dict[str, Any]], final: str = "تم الاطلاع على البيانات."
+) -> ToolCallingFakeModel:
+    requested = [
+        {"name": name, "args": args, "id": f"call-{index}"}
+        for index, (name, args) in enumerate(calls)
+    ]
+    messages = [
+        AIMessage(content="", tool_calls=requested),
+        AIMessage(content=final),
+    ]
+    return ToolCallingFakeModel(messages=iter(messages))
+
+
+def tool_messages(result: dict[str, Any]) -> list[str]:
+    return [
+        str(m.content) for m in result.get("messages", []) if isinstance(m, ToolMessage)
+    ]
+
+
 class FakeAgent:
 
     def __init__(
@@ -139,9 +224,11 @@ class FakeAgentFactory:
     def __init__(self, agent: FakeAgent) -> None:
         self.agent = agent
         self.prompts: list[str] = []
+        self.tools: list[list[Any]] = []
 
-    def build(self, system_prompt: str) -> FakeAgent:
+    def build(self, system_prompt: str, tools: Any = ()) -> FakeAgent:
         self.prompts.append(system_prompt)
+        self.tools.append(list(tools))
         return self.agent
 
 

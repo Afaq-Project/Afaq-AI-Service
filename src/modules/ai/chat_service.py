@@ -1,11 +1,17 @@
+import asyncio
 import logging
 import time
+from collections.abc import Mapping, Sequence
 from datetime import datetime
+from typing import Any
 
 from langchain_core.messages import HumanMessage
 
 from src.modules.core.database.repositories.conversation_repository import (
     ConversationRepository,
+)
+from src.modules.core.database.repositories.match_score_repository import (
+    MatchScoreRepository,
 )
 from src.modules.core.database.repositories.opportunity_repository import (
     OpportunityRepository,
@@ -14,6 +20,7 @@ from src.modules.infrastructure.llm.errors import translate_error
 
 from .chat_agent import (
     ChatAgentFactory,
+    called_tools,
     redacted_user_text,
     to_chat_messages,
     token_usage,
@@ -23,8 +30,11 @@ from .eligibility import EligibilityGuard, strip_marker
 from .exceptions import OpportunityNotFoundError
 from .models import ChatReply, ConversationHistory, UserProfile
 from .prompts import build_chat_system_prompt
+from .tools import build_chat_tools
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_ROLES = ("student",)
 
 
 class ChatService:
@@ -36,12 +46,18 @@ class ChatService:
         agents: ChatAgentFactory,
         eligibility: EligibilityGuard | None = None,
         history_limit: int = 20,
+        matches: MatchScoreRepository | None = None,
+        tools_enabled: bool = True,
+        tool_timeout: float = 20.0,
     ) -> None:
         self._conversations = conversations
         self._opportunities = opportunities
         self._agents = agents
         self._eligibility = eligibility or EligibilityGuard()
         self._history_limit = history_limit
+        self._matches = matches
+        self._tools_enabled = tools_enabled and matches is not None
+        self._tool_timeout = tool_timeout
 
     async def send_message(
         self,
@@ -52,6 +68,7 @@ class ChatService:
         locale: Locale = "ar",
         profile: UserProfile | None = None,
         application_id: str | None = None,
+        roles: Sequence[str] = DEFAULT_ROLES,
     ) -> ChatReply:
         opportunity = await self._opportunities.get_cleaned_by_id(opportunity_id)
         if opportunity is None:
@@ -78,7 +95,8 @@ class ChatService:
             return await self._decline(conversation.id, reason, source_url, locale)
 
         agent = self._agents.build(
-            build_chat_system_prompt(opportunity, profile, locale)
+            build_chat_system_prompt(opportunity, profile, locale),
+            self._build_tools(user_id),
         )
         started = time.perf_counter()
         try:
@@ -89,7 +107,7 @@ class ChatService:
                         HumanMessage(content=message),
                     ]
                 },
-                principal={"id": user_id, "roles": ["student"]},
+                principal={"id": user_id, "roles": list(roles)},
             )
         except Exception as exc:
             error = translate_error(exc)
@@ -154,13 +172,15 @@ class ChatService:
             latency_ms=latency_ms,
         )
         logger.info(
-            "Chat reply in conversation %s: model=%s in=%s out=%s latency=%dms",
+            "Chat reply in conversation %s: model=%s in=%s out=%s latency=%dms tools=%s",
             conversation.id,
             result.get("model"),
             input_tokens,
             output_tokens,
             latency_ms,
+            called_tools(result) or "-",
         )
+        self._log_denied_tools(conversation.id, user_id, roles, result)
         return ChatReply(
             conversation_id=conversation.id,
             message_id=stored.id,
@@ -196,6 +216,38 @@ class ChatService:
             messages=records[-limit:] if has_more else records,
             has_more=has_more,
         )
+
+    def _build_tools(self, user_id: str) -> list[Any]:
+        if not self._tools_enabled or self._matches is None:
+            return []
+        return list(
+            build_chat_tools(
+                user_id=user_id,
+                opportunities=self._opportunities,
+                matches=self._matches,
+                loop=asyncio.get_running_loop(),
+                timeout=self._tool_timeout,
+            )
+        )
+
+    def _log_denied_tools(
+        self,
+        conversation_id: str,
+        user_id: str,
+        roles: Sequence[str],
+        result: Mapping[str, Any],
+    ) -> None:
+        for event in result.get("guardrail_events") or []:
+            if event.get("stage") == "tool_call" and event.get("action") == "block":
+                logger.warning(
+                    "Tool call denied in conversation %s for user %s with roles %s: "
+                    "tool=%s reason=%s",
+                    conversation_id,
+                    user_id,
+                    list(roles),
+                    event.get("tool"),
+                    event.get("reason"),
+                )
 
     async def _decline(
         self,

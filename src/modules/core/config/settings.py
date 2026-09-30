@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     ai_chat_max_tokens: int = 4096
     ai_review_max_tokens: int = 8192
     ai_history_limit: int = 20
+    ai_tools_enabled: bool = True
+    ai_tool_timeout_seconds: float = 20.0
     ai_refusal_fallbacks: bool = True
 
 

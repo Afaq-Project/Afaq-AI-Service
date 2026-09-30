@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 
 from src.modules.ai.constants import Locale
 from src.modules.ai.models import EssayType, UserProfile
@@ -14,6 +14,11 @@ EssayText = Annotated[
 ]
 
 
+Role = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)
+]
+
+
 class ChatMessageRequest(BaseModel):
 
     user_id: UUID
@@ -22,6 +27,7 @@ class ChatMessageRequest(BaseModel):
     message: ChatText
     locale: Locale = "ar"
     profile: UserProfile | None = None
+    roles: list[Role] = Field(default=["student"], max_length=10)
 
 
 class EssayReviewRequest(BaseModel):

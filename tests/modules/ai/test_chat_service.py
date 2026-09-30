@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 
 import pytest
@@ -15,8 +16,10 @@ from .fakes import (
     FakeAgent,
     FakeAgentFactory,
     FakeConversationRepository,
+    FakeMatchScoreRepository,
     FakeOpportunityRepository,
     make_opportunity,
+    make_score,
 )
 
 
@@ -39,7 +42,9 @@ def ok_result(text: str) -> dict:
     }
 
 
-def make_service(agent=None, opportunities=None, history_limit=20):
+def make_service(
+    agent=None, opportunities=None, history_limit=20, matches=None, tools_enabled=True
+):
     conversations = FakeConversationRepository()
     factory = FakeAgentFactory(agent or FakeAgent(ok_result("إجابة")))
     service = ChatService(
@@ -49,6 +54,8 @@ def make_service(agent=None, opportunities=None, history_limit=20):
         ),
         agents=factory,
         history_limit=history_limit,
+        matches=matches,
+        tools_enabled=tools_enabled,
     )
     return service, conversations, factory
 
@@ -119,6 +126,85 @@ class TestSendMessage:
         with pytest.raises(OpportunityNotFoundError):
             await send(service)
         assert conversations.messages == []
+
+
+class TestDataAccess:
+    async def test_tools_are_handed_to_the_agent_bound_to_the_caller(self):
+        agent = FakeAgent(ok_result("جواب"))
+        service, _, factory = make_service(
+            agent, matches=FakeMatchScoreRepository({"user-1": [make_score()]})
+        )
+
+        await send(service)
+
+        names = sorted(tool.__name__ for tool in factory.tools[0])
+        assert names == [
+            "get_my_match_score",
+            "get_my_top_matches",
+            "get_opportunity_details",
+            "search_opportunities",
+        ]
+        score = await asyncio.to_thread(
+            next(t for t in factory.tools[0] if t.__name__ == "get_my_match_score"),
+            "opp-1",
+        )
+        assert "score=72%" in score
+
+    async def test_no_tools_without_a_match_repository(self):
+        service, _, factory = make_service(matches=None)
+
+        await send(service)
+
+        assert factory.tools[0] == []
+
+    async def test_tools_can_be_switched_off(self):
+        service, _, factory = make_service(
+            matches=FakeMatchScoreRepository(), tools_enabled=False
+        )
+
+        await send(service)
+
+        assert factory.tools[0] == []
+
+    async def test_roles_reach_the_principal(self):
+        agent = FakeAgent(ok_result("جواب"))
+        service, _, _ = make_service(agent)
+
+        await send(service, roles=["advisor", "student"])
+
+        assert agent.calls[0]["principal"] == {
+            "id": "user-1",
+            "roles": ["advisor", "student"],
+        }
+
+    async def test_default_role_is_student(self):
+        agent = FakeAgent(ok_result("جواب"))
+        service, _, _ = make_service(agent)
+
+        await send(service)
+
+        assert agent.calls[0]["principal"]["roles"] == ["student"]
+
+    async def test_token_usage_sums_every_model_turn(self):
+        result = ok_result("جواب")
+        result["messages"] = [
+            AIMessage(
+                content="",
+                usage_metadata={
+                    "input_tokens": 500,
+                    "output_tokens": 30,
+                    "total_tokens": 530,
+                },
+            ),
+            *result["messages"],
+        ]
+        service, conversations, _ = make_service(FakeAgent(result))
+
+        await send(service)
+
+        stored = conversations.by_role("assistant")[0]
+        assert stored.input_tokens == 1400
+        assert stored.output_tokens == 150
 
 
 class TestDeclines:

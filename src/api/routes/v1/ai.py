@@ -47,6 +47,7 @@ async def send_chat_message(
         message=request.message,
         locale=request.locale,
         profile=request.profile,
+        roles=request.roles,
     )
     return ChatMessageResponse(
         conversation_id=reply.conversation_id,

@@ -1,8 +1,19 @@
 from functools import lru_cache
 from typing import Any
 
-from wardhook.guardrails import InjectionDetector, PIIRedactor
+from wardhook.guardrails import InjectionDetector, PIIRedactor, RoleBasedToolPolicy
 from wardhook.guardrails.injection import SignalCategory
+
+PUBLIC_TOOLS = ["search_opportunities", "get_opportunity_details"]
+
+TOOL_ROLES: dict[str, list[str]] = {
+    "guest": PUBLIC_TOOLS,
+    "student": [*PUBLIC_TOOLS, "get_my_*"],
+    "advisor": [*PUBLIC_TOOLS, "get_my_*"],
+    "admin": ["*"],
+}
+
+DEFAULT_ROLES = ("guest",)
 
 ARABIC_INJECTION_SIGNALS = (
     SignalCategory(
@@ -38,8 +49,19 @@ ARABIC_INJECTION_SIGNALS = (
 
 
 @lru_cache
+def build_tool_policy() -> RoleBasedToolPolicy:
+    return RoleBasedToolPolicy(
+        TOOL_ROLES,
+        default_roles=DEFAULT_ROLES,
+        allow_unlisted=False,
+        allow_anonymous=False,
+    )
+
+
+@lru_cache
 def build_chat_guardrails() -> tuple[Any, ...]:
     return (
         InjectionDetector(extra_signals=ARABIC_INJECTION_SIGNALS),
         PIIRedactor(pack="default", on_stages=("input",), exclude=("PHONE",)),
+        build_tool_policy(),
     )

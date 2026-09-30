@@ -14,6 +14,9 @@ from src.modules.core.database.prisma_client import get_client
 from src.modules.core.database.repositories.conversation_repository import (
     ConversationRepository,
 )
+from src.modules.core.database.repositories.match_score_repository import (
+    MatchScoreRepository,
+)
 from src.modules.core.database.repositories.opportunity_repository import (
     OpportunityRepository,
 )
@@ -66,11 +69,15 @@ def get_chat_agent_factory() -> WardhookChatAgentFactory:
 
 def get_chat_service() -> ChatService:
     db = get_client()
+    settings = get_settings()
     return ChatService(
         conversations=ConversationRepository(db),
         opportunities=OpportunityRepository(db),
         agents=get_chat_agent_factory(),
-        history_limit=get_settings().ai_history_limit,
+        history_limit=settings.ai_history_limit,
+        matches=MatchScoreRepository(db),
+        tools_enabled=settings.ai_tools_enabled,
+        tool_timeout=settings.ai_tool_timeout_seconds,
     )
 
 

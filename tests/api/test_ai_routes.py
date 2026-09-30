@@ -151,6 +151,22 @@ class TestChatEndpoint:
         assert data["decline_reason"] == "missing_eligibility_data"
         assert data["disclaimer"] == DISCLAIMERS["en"]
 
+    def test_passes_roles(self):
+        chat = FakeChatService()
+
+        TestClient(build_app(chat=chat)).post(
+            "/api/v1/ai/chat", json=chat_body(roles=["advisor", "student"])
+        )
+
+        assert chat.calls[0]["roles"] == ["advisor", "student"]
+
+    def test_defaults_to_the_student_role(self):
+        chat = FakeChatService()
+
+        TestClient(build_app(chat=chat)).post("/api/v1/ai/chat", json=chat_body())
+
+        assert chat.calls[0]["roles"] == ["student"]
+
     def test_passes_profile(self):
         chat = FakeChatService()
         profile = {
@@ -173,6 +189,8 @@ class TestChatEndpoint:
             {"user_id": "not-a-uuid"},
             {"locale": "fr"},
             {"profile": {"gpa": -1}},
+            {"roles": ["x" * 41]},
+            {"roles": [""]},
         ],
     )
     def test_validation(self, overrides):

@@ -17,20 +17,28 @@ class ChatAgent(Protocol):
 
 
 class ChatAgentFactory(Protocol):
-    def build(self, system_prompt: str) -> ChatAgent: ...
+    def build(self, system_prompt: str, tools: Sequence[Any] = ()) -> ChatAgent: ...
 
 
 class WardhookChatAgentFactory:
 
-    def __init__(self, model: Any, guardrails: Sequence[Any] = ()) -> None:
+    def __init__(
+        self,
+        model: Any,
+        guardrails: Sequence[Any] = (),
+        max_tool_iterations: int = 3,
+    ) -> None:
         self._model = model
         self._guardrails = list(guardrails)
+        self._max_tool_iterations = max_tool_iterations
 
-    def build(self, system_prompt: str) -> ChatAgent:
+    def build(self, system_prompt: str, tools: Sequence[Any] = ()) -> ChatAgent:
         return AgentGraph(
             model=self._model,
             system_prompt=system_prompt,
             guardrails=self._guardrails,
+            tools=list(tools),
+            max_tool_iterations=self._max_tool_iterations,
             name="levora-chat",
         )
 
@@ -55,8 +63,18 @@ def redacted_user_text(result: Mapping[str, Any]) -> str | None:
 
 
 def token_usage(result: Mapping[str, Any]) -> tuple[int | None, int | None]:
-    for message in reversed(result.get("messages") or []):
+    totals: list[int] = [0, 0]
+    seen = False
+    for message in result.get("messages") or []:
         if isinstance(message, AIMessage) and message.usage_metadata:
             usage = message.usage_metadata
-            return usage.get("input_tokens"), usage.get("output_tokens")
-    return None, None
+            totals[0] += usage.get("input_tokens") or 0
+            totals[1] += usage.get("output_tokens") or 0
+            seen = True
+    if not seen:
+        return None, None
+    return totals[0], totals[1]
+
+
+def called_tools(result: Mapping[str, Any]) -> list[str]:
+    return [str(name) for name in result.get("tool_calls") or []]

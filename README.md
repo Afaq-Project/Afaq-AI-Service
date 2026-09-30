@@ -154,6 +154,7 @@ Answers a student's question about one opportunity, using only the stored opport
     "application_id": null,
     "message": "هل يشترطون شهادة IELTS؟",
     "locale": "ar",
+    "roles": ["student"],
     "profile": {
       "nationality": "Syria",
       "education_level": "Bachelor",
@@ -182,6 +183,20 @@ Answers a student's question about one opportunity, using only the stored opport
   * `guardrail_blocked`: the message was blocked (prompt injection).
 
   In every declined case `answer` points the student to `official_source_url`.
+
+#### Data access and permissions
+The assistant reaches platform data through tools rather than a prompt dump. Every tool is bound server-side to the `user_id` in the request — no tool takes an identity argument — and `roles` decides which tools the caller may use.
+
+| Tool | What it reads | Roles |
+| --- | --- | --- |
+| `search_opportunities` | Catalogue, open or closed within 30 days | all |
+| `get_opportunity_details` | One cleaned opportunity | all |
+| `get_my_match_score` | The caller's own `match_scores` row | `student`, `advisor`, `admin` |
+| `get_my_top_matches` | The caller's own ranked matches | `student`, `advisor`, `admin` |
+
+`roles` defaults to `["student"]`; a caller with no roles is treated as `guest`. The policy is deny-by-default: an unknown role, an unlisted tool, or a missing principal grants nothing, denials are logged with the user and role, and the model is told the call was refused so it can answer without guessing. Set `AI_TOOLS_ENABLED=false` to run the assistant without any data lookups.
+
+**Trust boundary:** the API key authenticates the calling service, not the end user. `user_id` and `roles` are taken from the request body, so the Main Service is responsible for authenticating the user and sending their real roles.
 
 ### 3.5 Essay Review
 * **URL:** `/api/v1/ai/essay-review`
