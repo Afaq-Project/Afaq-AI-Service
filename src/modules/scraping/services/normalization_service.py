@@ -8,13 +8,13 @@ logger = logging.getLogger(__name__)
 FUNDING_MAPPINGS = [
     (
         re.compile(
-            r"(?i)\b(fully[ -]?funded|full[ -]?funding|full[ -]?scholarship|full[ -]?tuition|100%[ -]?funded|ممول[ -]?بالكامل|تمويل[ -]?كامل)\b"
+            r"(?i)\b(fully[ -]?funded|full[ -]?funding|full[ -]?scholarship|full[ -]?tuition|100%[ -]?funded|100%[ -]?tuition|ممول[ -]?بالكامل|تمويل[ -]?كامل)\b"
         ),
         "fully_funded",
     ),
     (
         re.compile(
-            r"(?i)\b(partially[ -]?funded|partial[ -]?funding|tuition[ -]?(?:fee|waiver)|ممول[ -]?جزئيا|تمويل[ -]?جزئي|خصم|تخفيض)\b"
+            r"(?i)\b(partially[ -]?funded|partial[ -]?funding|partial[ -]?scholarship|tuition[ -]?(?:fee[ -]?)?(?:waiver|discount|reduction|deduction)|ممول[ -]?جزئيا|تمويل[ -]?جزئي|خصم|تخفيض)\b"
         ),
         "partially_funded",
     ),
@@ -283,12 +283,58 @@ class NormalizationService:
             return True
         return False
 
+    def _is_valid_academic_field(self, field_text: str) -> bool:
+        clean = field_text.strip().lower()
+        if not clean or clean in {"online", "exchange"}:
+            return False
+
+        # Discard country names and aliases
+        clean_no_paren = re.sub(r"\s*\([^)]*\)", "", clean).strip()
+        if clean in COUNTRY_MAPPINGS or clean_no_paren in COUNTRY_MAPPINGS:
+            return False
+        if any(
+            clean == c.lower() or clean_no_paren == c.lower()
+            for c in COUNTRY_MAPPINGS.values()
+        ):
+            return False
+
+        # Minimal defensive patterns for obvious non-academic taxonomy tags
+        non_academic_patterns = [
+            re.compile(
+                r"(?i)\b(scholarships?|studentships?|fellowships?|internships?|grants?)\b"
+            ),
+            re.compile(
+                r"(?i)\b(bachelors?|masters?|phd|doctorate|undergraduate|postgraduate|doctoral)\s+(?:scholarships?|degrees?|programmes?)\b"
+            ),
+            re.compile(
+                r"(?i)\b(study\s+in|travel\s+to|study\s+abroad|travel\s+abroad)\b"
+            ),
+            re.compile(
+                r"(?i)\b(fully[ -]?funded|partially[ -]?funded|unfunded|financial\s+aid)\b"
+            ),
+            re.compile(r"(?i)\b(university(?:\s+of)?|institute(?:\s+of)?|college)\b"),
+            re.compile(
+                r"(?i)\b(europe|european|america|american|asia|asian|middle\s+east|oceania|africa|african|latin\s+america|southeast\s+asia|asean|caribbean)\b"
+            ),
+            re.compile(
+                r"(?i)\b(women\s+scholarships?|international\s+scholarships?|international\s+students?)\b"
+            ),
+        ]
+
+        for pattern in non_academic_patterns:
+            if pattern.search(clean):
+                return False
+
+        return True
+
     def normalize_fields_of_study(self, fields: list[str]) -> list[str]:
         cleaned_fields = []
         for field in fields:
             if not field:
                 continue
-            item = field.strip().title()
-            if item and item not in cleaned_fields:
-                cleaned_fields.append(item)
+            item = field.strip()
+            if self._is_valid_academic_field(item):
+                norm_item = item.title()
+                if norm_item not in cleaned_fields:
+                    cleaned_fields.append(norm_item)
         return cleaned_fields

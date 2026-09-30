@@ -914,23 +914,85 @@ class Almin7Adapter(BaseAdapter):
 
         return funding_type, section_text
 
+    DEADLINE_KEYWORDS: tuple[str, ...] = (
+        "المواعيد النهائية",
+        "الموعد النهائي",
+        "آخر موعد للتقديم",
+        "اخر موعد للتقديم",
+        "آخر موعد للتسجيل",
+        "اخر موعد للتسجيل",
+        "آخر موعد",
+        "اخر موعد",
+        "تاريخ انتهاء التقديم",
+        "موعد انتهاء التقديم",
+        "تاريخ الإغلاق",
+        "موعد التقديم",
+        "deadline",
+        "application deadline",
+        "closing date",
+        "due date",
+    )
+
     def _extract_deadline_from_detail(
         self,
         content_node: Any,
     ) -> str | None:
-        """Extract the complete deadline section without inventing dates."""
+        """Extract the complete deadline section or labeled element without inventing dates."""
+        if not content_node:
+            return None
 
+        # 1. Heading-based section search (h2/h3)
         section_text = self._get_section_text(
             content_node,
-            (
-                "المواعيد النهائية",
-                "الموعد النهائي",
-                "آخر موعد",
-                "deadline",
-            ),
+            self.DEADLINE_KEYWORDS,
         )
+        if section_text:
+            return section_text.strip()
 
-        return section_text or None
+        # 2. Table-based extraction (<tr> with label cell + value cell)
+        for tr in content_node.find_all("tr"):
+            cells = tr.find_all(["td", "th"])
+            if len(cells) >= 2:
+                label_text = cells[0].get_text(" ", strip=True).lower()
+                if any(kw.lower() in label_text for kw in self.DEADLINE_KEYWORDS):
+                    val = cells[1].get_text(" ", strip=True)
+                    if val:
+                        return val.strip()
+
+        # 3. Inline labeled fields: <strong>, <b>, or <span> tags
+        for tag_name in ["strong", "b", "span"]:
+            for tag in content_node.find_all(tag_name):
+                label_text = tag.get_text(" ", strip=True)
+                if any(kw in label_text for kw in self.DEADLINE_KEYWORDS):
+                    parent = tag.parent
+                    if parent and parent.name in {"p", "li", "div", "span"}:
+                        parent_text = parent.get_text(" ", strip=True)
+                        if ":" in parent_text or "：" in parent_text:
+                            parts = re.split(r"[:：]", parent_text, maxsplit=1)
+                            if len(parts) > 1 and parts[1].strip():
+                                return parts[1].strip(" .،,;:")
+                        next_sib = tag.next_sibling
+                        if next_sib:
+                            sib_text = str(next_sib).strip()
+                            sib_text = re.sub(r"^[:：\s]+", "", sib_text).strip(
+                                " .،,;:"
+                            )
+                            if sib_text:
+                                return sib_text
+
+        # 4. List items (<li>) or Paragraphs (<p>) containing deadline label
+        for block_tag in content_node.find_all(["li", "p"]):
+            text = block_tag.get_text(" ", strip=True)
+            for kw in self.DEADLINE_KEYWORDS:
+                if kw in text:
+                    if ":" in text or "：" in text:
+                        parts = re.split(r"[:：]", text, maxsplit=1)
+                        if len(parts) > 1 and parts[1].strip():
+                            return parts[1].strip(" .،,;:")
+                    else:
+                        return text.strip()
+
+        return None
 
     def _resolve_categories(self, raw_item: dict[str, Any]) -> list[str]:
         """يستخرج التصنيفات سواء كانت من HTML card أو WP-JSON payload."""
@@ -1312,14 +1374,20 @@ class Almin7Adapter(BaseAdapter):
         return self._classify_funding_text(text)
 
     def _extract_deadline_text(self, content: str) -> str | None:
+        if not content:
+            return None
+
         patterns = [
-            r"(?:آخر موعد للتقديم|اخر موعد|الموعد النهائي)[:\s]+([^<\n\.,;]+)",
-            r"(?:deadline|application deadline)[:\s]+([^<\n\.,;]+)",
+            r"(?:آخر موعد للتقديم|اخر موعد للتقديم|آخر موعد للتسجيل|اخر موعد للتسجيل|آخر موعد|اخر موعد|الموعد النهائي|المواعيد النهائية|تاريخ انتهاء التقديم|موعد انتهاء التقديم|تاريخ الإغلاق|موعد التقديم)[:\s]+([^<\n\r]+)",
+            r"(?:deadline|application deadline|closing date|due date)[:\s]+([^<\n\r]+)",
         ]
         for pattern in patterns:
             match = re.search(pattern, content, re.IGNORECASE)
             if match:
-                return match.group(1).strip()
+                val = match.group(1).strip()
+                val = re.sub(r"<[^>]+>", " ", val).strip(" .،,;:")
+                if val:
+                    return val
         return None
 
     def _classify_funding_text(self, text: str) -> str | None:
