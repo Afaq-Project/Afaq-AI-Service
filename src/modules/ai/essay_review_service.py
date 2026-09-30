@@ -4,7 +4,7 @@ import re
 from src.modules.core.database.repositories.opportunity_repository import (
     OpportunityRepository,
 )
-from src.modules.infrastructure.llm.anthropic_client import StructuredGenerator
+from src.modules.infrastructure.llm.base import StructuredGenerator
 
 from .constants import Locale
 from .exceptions import OpportunityNotFoundError

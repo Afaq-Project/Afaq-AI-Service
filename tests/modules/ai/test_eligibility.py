@@ -1,7 +1,11 @@
 import pytest
 
 from src.modules.ai.constants import NO_DATA_MARKER
-from src.modules.ai.eligibility import EligibilityGuard, has_eligibility_data
+from src.modules.ai.eligibility import (
+    EligibilityGuard,
+    has_eligibility_data,
+    strip_marker,
+)
 
 from .fakes import make_opportunity
 
@@ -76,3 +80,13 @@ class TestUnanswerable:
 
     def test_real_answer_is_answerable(self, guard):
         assert not guard.is_unanswerable("The deadline is 5 November 2026.")
+
+    def test_partial_answer_is_kept(self, guard):
+        answer = (
+            f"{NO_DATA_MARKER} - الأوراق المطلوبة هي جواز السفر وكشف الدرجات، "
+            "لكن البيانات لا تذكر الموعد النهائي."
+        )
+
+        assert not guard.is_unanswerable(answer)
+        assert NO_DATA_MARKER not in strip_marker(answer)
+        assert strip_marker(answer).startswith("الأوراق المطلوبة")
