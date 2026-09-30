@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from prisma import Prisma
 
@@ -40,7 +40,7 @@ class ConversationRepository:
         data: dict[str, Any] = {"user_id": user_id, "opportunity_id": opportunity_id}
         if application_id is not None:
             data["application_id"] = application_id
-        return await self._db.conversation.create(data=data)  # type: ignore[arg-type]
+        return await self._db.conversation.create(data=cast(Any, data))
 
     async def add_message(
         self,
@@ -71,12 +71,12 @@ class ConversationRepository:
         data.update(
             {key: value for key, value in optional.items() if value is not None}
         )
-        return await self._db.conversationmessage.create(data=data)  # type: ignore[arg-type]
+        return await self._db.conversationmessage.create(data=cast(Any, data))
 
     async def update_message(self, message_id: str, **fields: Any) -> Any:
         return await self._db.conversationmessage.update(
             where={"id": message_id},
-            data=fields,  # type: ignore[arg-type]
+            data=cast(Any, fields),
         )
 
     async def get_recent_messages(self, conversation_id: str, limit: int) -> list[Any]:
@@ -104,7 +104,7 @@ class ConversationRepository:
             where["created_at"] = {"lt": before}
 
         records = await self._db.conversationmessage.find_many(
-            where=where,  # type: ignore[arg-type]
+            where=cast(Any, where),
             order={"created_at": "desc"},
             take=limit,
         )

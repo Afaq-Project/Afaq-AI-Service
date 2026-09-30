@@ -23,7 +23,7 @@ def create_chat_model(settings: Settings) -> Any:
     provider = resolve_provider(settings.ai_model)
 
     if provider == "google":
-        from langchain_google_genai import ChatGoogleGenerativeAI  # noqa: PLC0415
+        from langchain_google_genai import ChatGoogleGenerativeAI
 
         params: dict[str, Any] = {
             "model": settings.ai_model,
@@ -35,7 +35,7 @@ def create_chat_model(settings: Settings) -> Any:
             params["api_key"] = settings.google_api_key
         return ChatGoogleGenerativeAI(**params)
 
-    from langchain_anthropic import ChatAnthropic  # noqa: PLC0415
+    from langchain_anthropic import ChatAnthropic
 
     params = {
         "model": settings.ai_model,
