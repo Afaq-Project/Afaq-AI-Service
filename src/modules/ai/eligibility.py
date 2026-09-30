@@ -14,6 +14,13 @@ ELIGIBILITY_PATTERN = re.compile(
 RELIABLE_STATUSES = {"cleaned"}
 
 
+def strip_marker(answer: str) -> str:
+    if NO_DATA_MARKER not in answer:
+        return answer.strip()
+    cleaned = answer.replace(NO_DATA_MARKER, " ").strip()
+    return cleaned.lstrip(" -—:.،").strip()
+
+
 def _has_content(value: Any) -> bool:
     if isinstance(value, dict | list):
         return len(value) > 0
@@ -43,4 +50,4 @@ class EligibilityGuard:
         return None
 
     def is_unanswerable(self, answer: str) -> bool:
-        return not answer.strip() or NO_DATA_MARKER in answer
+        return not strip_marker(answer)

@@ -1,56 +1,17 @@
 import time
-from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
-import anthropic
 from anthropic import AsyncAnthropic
-from langchain_anthropic import ChatAnthropic
 from pydantic import BaseModel
 
-from src.modules.core.config.settings import Settings
-
-from .exceptions import (
-    LLMError,
-    LLMIncompleteResponseError,
-    LLMRateLimitError,
-    LLMRefusalError,
-    LLMTimeoutError,
-    LLMUnavailableError,
-)
+from .base import StructuredCompletion
+from .errors import translate_error
+from .exceptions import LLMIncompleteResponseError, LLMRefusalError
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 
-@dataclass(frozen=True)
-class StructuredCompletion[OutputT: BaseModel]:
-    output: OutputT
-    model: str
-    input_tokens: int
-    output_tokens: int
-    latency_ms: int
-
-
-class StructuredGenerator(Protocol):
-    async def generate[OutputT: BaseModel](
-        self, *, system: str, prompt: str, output_type: type[OutputT]
-    ) -> StructuredCompletion[OutputT]: ...
-
-
-def translate_error(exc: BaseException) -> LLMError:
-    if isinstance(exc, LLMError):
-        return exc
-    if isinstance(exc, anthropic.APITimeoutError | TimeoutError):
-        return LLMTimeoutError(str(exc) or "request timed out")
-    if isinstance(exc, anthropic.RateLimitError):
-        return LLMRateLimitError(str(exc))
-    if isinstance(exc, anthropic.APIConnectionError):
-        return LLMUnavailableError(str(exc))
-    if isinstance(exc, anthropic.APIStatusError) and exc.status_code >= 500:
-        return LLMUnavailableError(str(exc))
-    return LLMError(f"{type(exc).__name__}: {exc}")
-
-
-class StructuredLLMClient:
+class AnthropicStructuredClient:
 
     def __init__(
         self,
@@ -106,27 +67,11 @@ class StructuredLLMClient:
         await self._client.close()
 
 
-def create_structured_client(settings: Settings) -> StructuredLLMClient:
-    client = AsyncAnthropic(
-        api_key=settings.anthropic_api_key or None,
-        timeout=settings.ai_timeout_seconds,
-        max_retries=settings.ai_max_retries,
+def create_anthropic_client(
+    api_key: str, timeout: float, max_retries: int
+) -> AsyncAnthropic:
+    return AsyncAnthropic(
+        api_key=api_key or None,
+        timeout=timeout,
+        max_retries=max_retries,
     )
-    return StructuredLLMClient(
-        client,
-        model=settings.ai_model,
-        max_tokens=settings.ai_review_max_tokens,
-        refusal_fallbacks=settings.ai_refusal_fallbacks,
-    )
-
-
-def create_chat_model(settings: Settings) -> ChatAnthropic:
-    params: dict[str, Any] = {
-        "model": settings.ai_model,
-        "max_tokens": settings.ai_chat_max_tokens,
-        "timeout": settings.ai_timeout_seconds,
-        "max_retries": settings.ai_max_retries,
-    }
-    if settings.anthropic_api_key:
-        params["api_key"] = settings.anthropic_api_key
-    return ChatAnthropic(**params)

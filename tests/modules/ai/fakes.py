@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
-from src.modules.infrastructure.llm.anthropic_client import StructuredCompletion
+from src.modules.infrastructure.llm.base import StructuredCompletion
 
 
 def make_opportunity(**overrides: Any) -> SimpleNamespace:
