@@ -695,3 +695,230 @@ def test_exact_case_insensitive_field_of_study_equality_matches(
 
     assert res.is_eligible is True
     assert res.decision == EligibilityDecision.ELIGIBLE
+
+
+# ---------------------------------------------------------------------------
+# Geographic Token Exclusion in Field of Study Regression Tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "country_name",
+    [
+        "Netherlands",
+        "Germany",
+        "Canada",
+        "Italy",
+        "China",
+        "Japan",
+        "United States",
+        "Australia",
+    ],
+)
+def test_extract_field_of_study_excludes_country_names(country_name: str):
+    """Country names must NOT be extracted as academic fields of study."""
+    extractor = RequirementExtractor()
+    opp = {
+        "title": f"Scholarship in {country_name}",
+        "fields_of_study": ["Masters Scholarships", country_name, "Scholarships"],
+    }
+    extracted = extractor.extract(opp)
+    fos_reqs = extracted.by_type(RequirementType.FIELD_OF_STUDY)
+    assert len(fos_reqs) == 0
+
+
+def test_extract_field_of_study_preserves_legitimate_academic_field():
+    """Legitimate academic fields must be preserved and extracted properly."""
+    extractor = RequirementExtractor()
+    opp = {
+        "title": "Computer Science Fellowship",
+        "fields_of_study": ["Computer Science"],
+    }
+    extracted = extractor.extract(opp)
+    fos_reqs = extracted.by_type(RequirementType.FIELD_OF_STUDY)
+    assert len(fos_reqs) == 1
+    assert fos_reqs[0].value == ["Computer Science"]
+
+
+def test_extract_field_of_study_filters_non_academic_and_country_in_mixed_input():
+    """Mixed input with academic fields, countries, and non-academic tokens keeps only academic fields."""
+    extractor = RequirementExtractor()
+    opp = {
+        "title": "International Tech Grant",
+        "fields_of_study": [
+            "Computer Science",
+            "Netherlands",
+            "Scholarships",
+            "Europe",
+            "Artificial Intelligence",
+            "Germany",
+            "Fully Funded",
+        ],
+    }
+    extracted = extractor.extract(opp)
+    fos_reqs = extracted.by_type(RequirementType.FIELD_OF_STUDY)
+    assert len(fos_reqs) == 1
+    assert fos_reqs[0].value == ["Computer Science", "Artificial Intelligence"]
+
+
+def test_leiden_opportunity_no_longer_extracts_netherlands_field():
+    """Leiden opportunity taxonomy with country tags must not produce field_of_study."""
+    extractor = RequirementExtractor()
+    opp = {
+        "title": "Leiden University Fully Funded Scholarships in the Netherlands",
+        "fields_of_study": [
+            "Masters Scholarships",
+            "Ph.D Scholarships",
+            "Scholarships",
+            "Undergraduate Scholarships",
+            "Europe",
+            "Netherlands",
+        ],
+    }
+    extracted = extractor.extract(opp)
+    fos_reqs = extracted.by_type(RequirementType.FIELD_OF_STUDY)
+    assert len(fos_reqs) == 0
+
+
+# ---------------------------------------------------------------------------
+# Arabic Requirement Extraction Tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("arabic_gpa_text", "expected_min", "expected_norm_4"),
+    [
+        ("معدل تراكمي لا يقل عن 3.0", 3.0, 3.0),
+        ("المعدل التراكمي: 3.5 من 4", 3.5, 3.5),
+        ("يشترط معدل 3.2 من أصل 4.0", 3.2, 3.2),
+        ("معدل لا يقل عن 80%", 80.0, 3.2),
+        ("يشترط معدل 75 بالمئة", 75.0, 3.0),
+        ("المعدل التراكمي: 85 بالمائة", 85.0, 3.4),
+    ],
+)
+def test_arabic_gpa_extraction(arabic_gpa_text: str, expected_min: float, expected_norm_4: float):
+    """Arabic absolute and percentage GPA phrases must be correctly extracted and normalized."""
+    extractor = RequirementExtractor()
+    opp = {
+        "title": "منحة دراسية مميزة",
+        "eligibility": {"eligibility_text": arabic_gpa_text},
+    }
+    extracted = extractor.extract(opp)
+    gpa_reqs = extracted.by_type(RequirementType.GPA)
+    assert len(gpa_reqs) == 1
+    req = gpa_reqs[0]
+    assert req.status == RequirementStatus.REQUIRED
+    assert req.condition == RequirementCondition.GTE
+    assert req.value["minimum"] == pytest.approx(expected_min)
+    assert req.value["min_gpa_normalized_4"] == pytest.approx(expected_norm_4)
+
+
+@pytest.mark.parametrize(
+    ("arabic_degree_text", "expected_level"),
+    [
+        ("درجة البكالوريوس في الهندسة", "Bachelor"),
+        ("يشترط الحصول على بكالوريوس", "Bachelor"),
+        ("درجة الماجستير في العلوم", "Master"),
+        ("مخصصة لطلاب ماجستير إدارة الأعمال", "Master"),
+        ("درجة الدكتوراه في الطب", "PhD"),
+        ("منح دكتوراه بحثية", "PhD"),
+    ],
+)
+def test_arabic_education_level_extraction(arabic_degree_text: str, expected_level: str):
+    """Arabic education levels must normalize to canonical English degree names."""
+    extractor = RequirementExtractor()
+    opp = {
+        "title": "منحة دراسية",
+        "description": arabic_degree_text,
+    }
+    extracted = extractor.extract(opp)
+    edu_reqs = extracted.by_type(RequirementType.EDUCATION)
+    assert len(edu_reqs) == 1
+    assert expected_level in edu_reqs[0].value
+
+
+@pytest.mark.parametrize(
+    ("arabic_nationality_text", "expected_country"),
+    [
+        ("الفئة المستهدفة: فلسطين", "Palestine"),
+        ("الجنسية: فلسطيني", "Palestine"),
+        ("مخصصة للطلاب الفلسطينيين", "Palestine"),
+        ("الجنسية الفلسطينية مطلوبة", "Palestine"),
+        ("الفئة المستهدفة: الأردن", "Jordan"),
+        ("الجنسية: أردني", "Jordan"),
+        ("مخصصة للطلاب الأردنيين", "Jordan"),
+        ("الفئة المستهدفة: المملكة العربية السعودية", "Saudi Arabia"),
+        ("الجنسية: سعودي", "Saudi Arabia"),
+        ("مخصصة للطلاب السعوديين", "Saudi Arabia"),
+    ],
+)
+def test_arabic_nationality_extraction(arabic_nationality_text: str, expected_country: str):
+    """Arabic nationality requirements and demonyms must extract canonical country names."""
+    extractor = RequirementExtractor()
+    opp = {
+        "title": "منحة دراسية دولية",
+        "eligibility": {"eligibility_text": arabic_nationality_text},
+    }
+    extracted = extractor.extract(opp)
+    nat_reqs = extracted.by_type(RequirementType.NATIONALITY)
+    assert len(nat_reqs) == 1
+    assert nat_reqs[0].status == RequirementStatus.REQUIRED
+    assert nat_reqs[0].condition == RequirementCondition.IN
+    assert expected_country in nat_reqs[0].value
+
+
+def test_arabic_english_extraction_and_matching_equivalence(base_user_profile: UserProfileDTO):
+    """Opportunities with Arabic vs English text must produce equivalent extraction and match scores."""
+    extractor = RequirementExtractor()
+    hard_filter = HardFilterService()
+
+    base_user_profile.nationality = "Palestine"
+    base_user_profile.education_level = "Bachelor"
+    base_user_profile.educations[0].gpa_normalized_4 = 3.5
+
+    en_opp = {
+        "title": "Master's Scholarship in Computer Science",
+        "description": "Master's degree program for Palestinian students. Minimum GPA 3.0/4.0.",
+        "eligibility": {"eligibility_text": "Target group: Palestine. Minimum GPA 3.0."},
+    }
+
+    ar_opp = {
+        "title": "منحة ماجستير في علوم الحاسوب",
+        "description": "برنامج درجة الماجستير للطلاب الفلسطينيين. معدل تراكمي لا يقل عن 3.0 من 4.",
+        "eligibility": {"eligibility_text": "الفئة المستهدفة: فلسطين. معدل لا يقل عن 3.0."},
+    }
+
+    en_reqs = extractor.extract(en_opp)
+    ar_reqs = extractor.extract(ar_opp)
+
+    # Check requirement equivalence
+    en_nat = en_reqs.by_type(RequirementType.NATIONALITY)[0]
+    ar_nat = ar_reqs.by_type(RequirementType.NATIONALITY)[0]
+    assert en_nat.value == ar_nat.value == ["Palestine"]
+
+    en_edu = en_reqs.by_type(RequirementType.EDUCATION)[0]
+    ar_edu = ar_reqs.by_type(RequirementType.EDUCATION)[0]
+    assert "Master" in en_edu.value and "Master" in ar_edu.value
+
+    en_gpa = en_reqs.by_type(RequirementType.GPA)[0]
+    ar_gpa = ar_reqs.by_type(RequirementType.GPA)[0]
+    assert en_gpa.value["min_gpa_normalized_4"] == ar_gpa.value["min_gpa_normalized_4"] == 3.0
+
+    # Check hard filter equivalence
+    en_filter_res = hard_filter.evaluate_detailed(base_user_profile, en_reqs)
+    ar_filter_res = hard_filter.evaluate_detailed(base_user_profile, ar_reqs)
+    assert en_filter_res.is_eligible == ar_filter_res.is_eligible
+    assert en_filter_res.decision == ar_filter_res.decision
+
+
+def test_arabic_ordinary_prose_no_false_positives():
+    """General Arabic text without eligibility requirements must not produce spurious extractions."""
+    extractor = RequirementExtractor()
+    opp = {
+        "title": "تاريخ التعليم العالي والتطوير الأكاديمي",
+        "description": "تأسست الجامعة عام 1990 وتقدم خدمات تعليمية وبحثية متميزة في منطقة الشرق الأوسط والعالم.",
+        "eligibility": {"eligibility_text": "يرجى زيارة الموقع الإلكتروني للمزيد من المعلومات العامة والتسجيل المبكر."},
+    }
+    extracted = extractor.extract(opp)
+    assert len(extracted.by_type(RequirementType.GPA)) == 0
+    assert len(extracted.by_type(RequirementType.NATIONALITY)) == 0
