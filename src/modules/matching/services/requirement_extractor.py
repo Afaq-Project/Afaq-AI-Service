@@ -316,9 +316,7 @@ class RequirementExtractor:
 
         if study_levels:
             norm_levels = (
-                self._norm.normalize_study_levels(study_levels)
-                if self._norm
-                else None
+                self._norm.normalize_study_levels(study_levels) if self._norm else None
             )
             final_levels = norm_levels if norm_levels else study_levels
             results.append(
@@ -534,9 +532,7 @@ class RequirementExtractor:
         m = ar_gpa_pattern.search(search_text)
         if m:
             raw_val = float(m.group(1).replace(",", "."))
-            scale = (
-                float(m.group(2).replace(",", ".")) if m.group(2) else 4.0
-            )
+            scale = float(m.group(2).replace(",", ".")) if m.group(2) else 4.0
             gpa_4 = raw_val if scale == 4.0 else (raw_val / scale) * 4.0
             results.append(
                 ExtractedRequirement(

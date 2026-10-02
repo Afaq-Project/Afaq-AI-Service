@@ -796,7 +796,9 @@ def test_leiden_opportunity_no_longer_extracts_netherlands_field():
         ("المعدل التراكمي: 85 بالمائة", 85.0, 3.4),
     ],
 )
-def test_arabic_gpa_extraction(arabic_gpa_text: str, expected_min: float, expected_norm_4: float):
+def test_arabic_gpa_extraction(
+    arabic_gpa_text: str, expected_min: float, expected_norm_4: float
+):
     """Arabic absolute and percentage GPA phrases must be correctly extracted and normalized."""
     extractor = RequirementExtractor()
     opp = {
@@ -824,7 +826,9 @@ def test_arabic_gpa_extraction(arabic_gpa_text: str, expected_min: float, expect
         ("منح دكتوراه بحثية", "PhD"),
     ],
 )
-def test_arabic_education_level_extraction(arabic_degree_text: str, expected_level: str):
+def test_arabic_education_level_extraction(
+    arabic_degree_text: str, expected_level: str
+):
     """Arabic education levels must normalize to canonical English degree names."""
     extractor = RequirementExtractor()
     opp = {
@@ -852,7 +856,9 @@ def test_arabic_education_level_extraction(arabic_degree_text: str, expected_lev
         ("مخصصة للطلاب السعوديين", "Saudi Arabia"),
     ],
 )
-def test_arabic_nationality_extraction(arabic_nationality_text: str, expected_country: str):
+def test_arabic_nationality_extraction(
+    arabic_nationality_text: str, expected_country: str
+):
     """Arabic nationality requirements and demonyms must extract canonical country names."""
     extractor = RequirementExtractor()
     opp = {
@@ -867,7 +873,9 @@ def test_arabic_nationality_extraction(arabic_nationality_text: str, expected_co
     assert expected_country in nat_reqs[0].value
 
 
-def test_arabic_english_extraction_and_matching_equivalence(base_user_profile: UserProfileDTO):
+def test_arabic_english_extraction_and_matching_equivalence(
+    base_user_profile: UserProfileDTO,
+):
     """Opportunities with Arabic vs English text must produce equivalent extraction and match scores."""
     extractor = RequirementExtractor()
     hard_filter = HardFilterService()
@@ -879,13 +887,17 @@ def test_arabic_english_extraction_and_matching_equivalence(base_user_profile: U
     en_opp = {
         "title": "Master's Scholarship in Computer Science",
         "description": "Master's degree program for Palestinian students. Minimum GPA 3.0/4.0.",
-        "eligibility": {"eligibility_text": "Target group: Palestine. Minimum GPA 3.0."},
+        "eligibility": {
+            "eligibility_text": "Target group: Palestine. Minimum GPA 3.0."
+        },
     }
 
     ar_opp = {
         "title": "منحة ماجستير في علوم الحاسوب",
         "description": "برنامج درجة الماجستير للطلاب الفلسطينيين. معدل تراكمي لا يقل عن 3.0 من 4.",
-        "eligibility": {"eligibility_text": "الفئة المستهدفة: فلسطين. معدل لا يقل عن 3.0."},
+        "eligibility": {
+            "eligibility_text": "الفئة المستهدفة: فلسطين. معدل لا يقل عن 3.0."
+        },
     }
 
     en_reqs = extractor.extract(en_opp)
@@ -902,7 +914,11 @@ def test_arabic_english_extraction_and_matching_equivalence(base_user_profile: U
 
     en_gpa = en_reqs.by_type(RequirementType.GPA)[0]
     ar_gpa = ar_reqs.by_type(RequirementType.GPA)[0]
-    assert en_gpa.value["min_gpa_normalized_4"] == ar_gpa.value["min_gpa_normalized_4"] == 3.0
+    assert (
+        en_gpa.value["min_gpa_normalized_4"]
+        == ar_gpa.value["min_gpa_normalized_4"]
+        == 3.0
+    )
 
     # Check hard filter equivalence
     en_filter_res = hard_filter.evaluate_detailed(base_user_profile, en_reqs)
@@ -917,7 +933,9 @@ def test_arabic_ordinary_prose_no_false_positives():
     opp = {
         "title": "تاريخ التعليم العالي والتطوير الأكاديمي",
         "description": "تأسست الجامعة عام 1990 وتقدم خدمات تعليمية وبحثية متميزة في منطقة الشرق الأوسط والعالم.",
-        "eligibility": {"eligibility_text": "يرجى زيارة الموقع الإلكتروني للمزيد من المعلومات العامة والتسجيل المبكر."},
+        "eligibility": {
+            "eligibility_text": "يرجى زيارة الموقع الإلكتروني للمزيد من المعلومات العامة والتسجيل المبكر."
+        },
     }
     extracted = extractor.extract(opp)
     assert len(extracted.by_type(RequirementType.GPA)) == 0
