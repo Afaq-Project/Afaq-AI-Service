@@ -171,9 +171,11 @@ class GenericTemplateAdapter(BaseAdapter):
                 val = self._extract_field_value(card, rule)
                 item_data[field_name] = val
 
-            card_classes = card.get("class", [])
+            raw_card_classes = card.get("class")
             item_data["card_classes"] = (
-                [str(c) for c in card_classes] if isinstance(card_classes, list) else []
+                [str(c) for c in raw_card_classes]
+                if isinstance(raw_card_classes, list)
+                else []
             )
             item_data["raw_html"] = str(card)
 
@@ -263,10 +265,14 @@ class GenericTemplateAdapter(BaseAdapter):
             return str(node)
 
         if extract_type == "href":
-            return self._resolve_url(node.get("href"))
+            href_val = node.get("href")
+            href_str = href_val[0] if isinstance(href_val, list) else href_val
+            return self._resolve_url(href_str)
 
         if extract_type == "src":
-            return self._resolve_url(node.get("src"))
+            src_val = node.get("src")
+            src_str = src_val[0] if isinstance(src_val, list) else src_val
+            return self._resolve_url(src_str)
 
         if extract_type.startswith("attr:"):
             attr_name = extract_type.split(":", 1)[1]
@@ -313,7 +319,7 @@ class GenericTemplateAdapter(BaseAdapter):
             anchor = node.find("a", href=True) if node.name != "a" else node
             text = node.get_text(" ", strip=True)
             href = str(anchor.get("href", "")).lower() if anchor else ""
-            node_classes = node.get("class", [])
+            node_classes = node.get("class")
             classes_str = (
                 " ".join(str(c) for c in node_classes).lower()
                 if isinstance(node_classes, list)

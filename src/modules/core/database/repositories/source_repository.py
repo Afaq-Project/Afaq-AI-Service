@@ -2,7 +2,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from prisma import Prisma
+from prisma import Json, Prisma
 
 logger = logging.getLogger(__name__)
 
@@ -53,5 +53,5 @@ class SourceRepository:
         current_config["last_listing_hash"] = listing_hash
         return await self._db.source.update(
             where={"id": source_id},
-            data={"pagination_config": current_config},
+            data={"pagination_config": Json(current_config)},
         )
