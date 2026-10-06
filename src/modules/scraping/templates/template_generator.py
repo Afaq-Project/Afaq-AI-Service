@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -38,7 +38,7 @@ from src.modules.scraping.templates.template_contract import (
 logger = logging.getLogger(__name__)
 
 
-class CandidateStatus(str, Enum):
+class CandidateStatus(StrEnum):
     """Lifecycle status for a generated candidate extraction template."""
 
     ACCEPTED_FOR_REVIEW = "ACCEPTED_FOR_REVIEW"

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -24,7 +24,7 @@ from src.modules.scraping.templates.template_contract import (
 logger = logging.getLogger(__name__)
 
 
-class ChangeDetectionStatus(str, Enum):
+class ChangeDetectionStatus(StrEnum):
     """Classification outcomes for template evaluation."""
 
     VALID = "VALID"
