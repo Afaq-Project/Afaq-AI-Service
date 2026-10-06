@@ -16,6 +16,7 @@ class DeduplicationService:
     def __init__(self, opportunity_repo: OpportunityRepository | None = None) -> None:
         self._repo = opportunity_repo
         self._seen_hashes: set[str] = set()
+        self._seen_source_urls: set[str] = set()
 
     def generate_content_hash(self, data: dict[str, Any]) -> str:
         """
@@ -60,27 +61,57 @@ class DeduplicationService:
     ) -> bool:
         """يفحص ما إذا كانت الفرصة مكررة في الدفعة الحالية أو في قاعدة البيانات."""
         h = content_hash or self.generate_content_hash(data)
+        source_url = data.get("source_url") or ""
+        norm_source_url = self._normalize_url_for_hashing(source_url)
 
         # 1. Check in-memory batch cache
         if h in self._seen_hashes:
             return True
 
+        if norm_source_url and norm_source_url in self._seen_source_urls:
+            return True
+
         # 2. Check in database if repository is available
         if self._repo is not None:
             try:
-                exists = await self._repo.exists_by_content_hash(h)
-                if exists:
+                # Check by content_hash (title + org + opp_type + country)
+                exists_hash = await self._repo.exists_by_content_hash(h)
+                if exists_hash:
                     self._seen_hashes.add(h)
+                    if norm_source_url:
+                        self._seen_source_urls.add(norm_source_url)
                     return True
+
+                # Check by source_url (prevents duplicates when title changes for same detail page)
+                if norm_source_url:
+                    exists_url = await self._repo.exists_by_source_url(source_url)
+                    if not exists_url and source_url.endswith("/"):
+                        exists_url = await self._repo.exists_by_source_url(
+                            source_url.rstrip("/")
+                        )
+                    elif not exists_url and not source_url.endswith("/"):
+                        exists_url = await self._repo.exists_by_source_url(
+                            source_url + "/"
+                        )
+
+                    if exists_url:
+                        self._seen_hashes.add(h)
+                        self._seen_source_urls.add(norm_source_url)
+                        return True
             except Exception as exc:
                 logger.warning("Error checking duplicate in database: %s", exc)
 
         return False
 
-    def mark_as_seen(self, content_hash: str) -> None:
-        """يسجل البصمة كفرصة تمت معالجتها في الدفعة الحالية."""
+    def mark_as_seen(self, content_hash: str, source_url: str | None = None) -> None:
+        """يسجل البصمة ورابط المصدر كفرصة تمت معالجتها في الدفعة الحالية."""
         self._seen_hashes.add(content_hash)
+        if source_url:
+            norm_url = self._normalize_url_for_hashing(source_url)
+            if norm_url:
+                self._seen_source_urls.add(norm_url)
 
     def reset_batch(self) -> None:
         """يمسح ذاكرة الدفعة الحالية لبدء دفعة جلب جديدة."""
         self._seen_hashes.clear()
+        self._seen_source_urls.clear()

@@ -444,3 +444,251 @@ async def test_scraper_service_webhook_failure_does_not_fail_scrape():
     assert result.total_opportunities == 5
     assert result.succeeded_sources == ["almin7"]
     assert len(result.failed_sources) == 0
+
+
+@pytest.mark.asyncio
+async def test_scenario_a_listing_content_unchanged_skips_extraction():
+    """Scenario A: Listing content unchanged -> skip detail fetching and extraction."""
+    from src.modules.scraping.adapters.generic_template_adapter import (
+        GenericTemplateAdapter,
+    )
+    from src.modules.scraping.templates.llm_provider import MockLLMProvider
+    from src.modules.scraping.templates.template_generator import (
+        GeminiTemplateGenerator,
+    )
+
+    valid_template = {
+        "$schema_version": "1.0",
+        "source_name": "test_src",
+        "base_url": "https://example.org",
+        "detail_rules": {
+            "fields": {"title": {"selector": "h1", "extract": "text", "required": True}}
+        },
+    }
+
+    mock_source = MagicMock()
+    mock_source.id = "src-scen-a"
+    mock_source.name = "test_src"
+    mock_source.base_url = "https://example.org"
+    mock_source.method = "generic_template"
+    mock_source.template = valid_template
+    mock_source.pagination_config = {"last_listing_hash": "hash-abc-123"}
+
+    mock_adapter = MagicMock(spec=GenericTemplateAdapter)
+    mock_adapter.fetch = AsyncMock(return_value=[{"title": "Sample"}])
+    mock_adapter.has_listing_content_changed.return_value = False  # NO CHANGE
+    mock_adapter.fetch_with_details = AsyncMock(return_value=[])
+
+    mock_llm = MockLLMProvider(response_text="{}")
+    mock_gemini = GeminiTemplateGenerator(llm_provider=mock_llm)
+
+    service = ScraperService(gemini_generator=mock_gemini)
+
+    with patch(
+        "src.modules.scraping.adapters.adapter_factory.AdapterFactory.get_adapter",
+        return_value=mock_adapter,
+    ):
+        count = await service._process_source(mock_source)
+
+    assert count == 0
+    mock_adapter.fetch_with_details.assert_called_once_with(
+        limit=50, previous_hash="hash-abc-123"
+    )
+    assert mock_llm.last_prompt is None  # Gemini was NOT called
+
+
+@pytest.mark.asyncio
+async def test_scenario_b_listing_content_changed_proceeds_with_extraction():
+    """Scenario B: Listing content changed -> existing template extracts opportunities."""
+    from src.modules.scraping.adapters.generic_template_adapter import (
+        GenericTemplateAdapter,
+    )
+
+    valid_template = {
+        "$schema_version": "1.0",
+        "source_name": "test_src",
+        "base_url": "https://example.org",
+        "detail_rules": {
+            "fields": {"title": {"selector": "h1", "extract": "text", "required": True}}
+        },
+    }
+
+    mock_source = MagicMock()
+    mock_source.id = "src-scen-b"
+    mock_source.name = "test_src"
+    mock_source.base_url = "https://example.org"
+    mock_source.method = "generic_template"
+    mock_source.template = valid_template
+    mock_source.pagination_config = {"last_listing_hash": "old-hash"}
+
+    raw_item = {
+        "title": "New Scholarship 2026",
+        "description": "Details about scholarship",
+        "source_url": "https://example.org/new-scholarship",
+        "link": "https://example.org/new-scholarship",
+    }
+
+    mock_adapter = MagicMock(spec=GenericTemplateAdapter)
+    mock_adapter.fetch = AsyncMock(return_value=[raw_item])
+    mock_adapter.has_listing_content_changed.return_value = True  # CHANGE DETECTED
+    mock_adapter.last_listing_hash = "new-hash-xyz"
+    mock_adapter.fetch_with_details = AsyncMock(return_value=[raw_item])
+    mock_adapter.is_opportunity.return_value = True
+    mock_adapter.parse.return_value = raw_item
+
+    mock_source_repo = MagicMock()
+    mock_source_repo.update_last_listing_hash = AsyncMock()
+
+    service = ScraperService(source_repo=mock_source_repo)
+
+    with patch(
+        "src.modules.scraping.adapters.adapter_factory.AdapterFactory.get_adapter",
+        return_value=mock_adapter,
+    ):
+        count = await service._process_source(mock_source)
+
+    assert count == 1
+    mock_adapter.fetch_with_details.assert_called_once()
+    mock_source_repo.update_last_listing_hash.assert_called_once_with(
+        "src-scen-b", "new-hash-xyz"
+    )
+
+
+@pytest.mark.asyncio
+async def test_scenario_c_template_missing_invokes_gemini_candidate_generation():
+    """Scenario C: Template missing -> ScraperService invokes Gemini for candidate template."""
+    import json
+
+    from src.modules.scraping.templates.llm_provider import MockLLMProvider
+    from src.modules.scraping.templates.template_generator import (
+        GeminiTemplateGenerator,
+    )
+
+    valid_candidate_json = {
+        "$schema_version": "1.0",
+        "source_name": "missing_src",
+        "base_url": "https://example.org",
+        "detail_rules": {
+            "fields": {"title": {"selector": "h1", "extract": "text", "required": True}}
+        },
+    }
+
+    mock_source = MagicMock()
+    mock_source.id = "src-scen-c"
+    mock_source.name = "missing_src"
+    mock_source.base_url = "https://example.org"
+    mock_source.method = "generic_template"
+    mock_source.template = None  # TEMPLATE MISSING
+    mock_source.template_config = None
+    mock_source.source_config = {}
+
+    mock_llm = MockLLMProvider(response_text=json.dumps(valid_candidate_json))
+    gemini_generator = GeminiTemplateGenerator(llm_provider=mock_llm)
+
+    service = ScraperService(gemini_generator=gemini_generator)
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = (
+        "<html><body><article><h1>Scholarship Title</h1></article></body></html>"
+    )
+
+    with patch("httpx.AsyncClient.get", return_value=mock_resp):
+        count = await service._process_source(mock_source)
+
+    assert count == 0
+    assert mock_llm.last_prompt is not None
+
+
+@pytest.mark.asyncio
+async def test_scenario_d_template_structure_changed_invokes_gemini_candidate_generation():
+    """Scenario D: Template structure changed -> Gemini candidate generated, active template untouched."""
+    import json
+
+    from src.modules.scraping.adapters.generic_template_adapter import (
+        GenericTemplateAdapter,
+    )
+    from src.modules.scraping.templates.change_detector import (
+        ChangeDetectionResult,
+        ChangeDetectionStatus,
+        PageFetchResult,
+    )
+    from src.modules.scraping.templates.llm_provider import MockLLMProvider
+    from src.modules.scraping.templates.template_generator import (
+        GeminiTemplateGenerator,
+    )
+
+    current_template = {
+        "$schema_version": "1.0",
+        "source_name": "degraded_src",
+        "base_url": "https://example.org",
+        "detail_rules": {
+            "fields": {
+                "title": {"selector": "h1.old", "extract": "text", "required": True}
+            }
+        },
+    }
+
+    new_candidate_json = {
+        "$schema_version": "1.0",
+        "source_name": "degraded_src",
+        "base_url": "https://example.org",
+        "detail_rules": {
+            "fields": {
+                "title": {"selector": "h1.new", "extract": "text", "required": True}
+            }
+        },
+    }
+
+    mock_source = MagicMock()
+    mock_source.id = "src-scen-d"
+    mock_source.name = "degraded_src"
+    mock_source.base_url = "https://example.org"
+    mock_source.method = "generic_template"
+    mock_source.template = current_template
+    mock_source.template_config = None
+    mock_source.source_config = {}
+
+    mock_detection_res = MagicMock(spec=ChangeDetectionResult)
+    mock_detection_res.status = ChangeDetectionStatus.STRUCTURE_CHANGED
+    mock_detection_res.errors = ["Required field 'title' not found"]
+    mock_detection_res.quality_score = 0.0
+
+    mock_adapter = MagicMock(spec=GenericTemplateAdapter)
+    mock_adapter.template = current_template
+    mock_adapter.base_url = "https://example.org"
+    mock_adapter.fetch = AsyncMock(return_value=[{"title": "Test"}])
+    mock_adapter.has_listing_content_changed.return_value = True
+    mock_adapter.last_listing_hash = "hash-1"
+    mock_adapter.last_detail_fetches = [
+        PageFetchResult(
+            url="https://example.org/detail-1",
+            success=True,
+            status_code=200,
+            html="<html><body><h1>Test</h1></body></html>",
+        )
+    ]
+    mock_adapter.last_listing_fetches = [
+        PageFetchResult(
+            url="https://example.org",
+            success=True,
+            status_code=200,
+            html="<html><body><div>Card</div></body></html>",
+        )
+    ]
+    mock_adapter.fetch_with_details = AsyncMock(return_value=[])
+    mock_adapter.run_change_detection.return_value = mock_detection_res
+
+    mock_llm = MockLLMProvider(response_text=json.dumps(new_candidate_json))
+    gemini_generator = GeminiTemplateGenerator(llm_provider=mock_llm)
+
+    service = ScraperService(gemini_generator=gemini_generator)
+
+    with patch(
+        "src.modules.scraping.adapters.adapter_factory.AdapterFactory.get_adapter",
+        return_value=mock_adapter,
+    ):
+        await service._process_source(mock_source)
+
+    # Active template is NOT overwritten, Gemini was called for candidate
+    assert mock_llm.last_prompt is not None

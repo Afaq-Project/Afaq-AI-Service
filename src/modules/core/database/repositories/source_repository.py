@@ -43,3 +43,15 @@ class SourceRepository:
             where={"id": source_id},
             data={"last_scraped_at": datetime.now(UTC)},
         )
+
+    async def update_last_listing_hash(self, source_id: str, listing_hash: str) -> Any:
+        """يسجل هاش محتوى صفحة الـ Listing الأخيرة داخل حقل pagination_config JSON بدون تعديل DB Schema."""
+        source = await self.get_by_id(source_id)
+        if not source:
+            return None
+        current_config = dict(getattr(source, "pagination_config", {}) or {})
+        current_config["last_listing_hash"] = listing_hash
+        return await self._db.source.update(
+            where={"id": source_id},
+            data={"pagination_config": current_config},
+        )

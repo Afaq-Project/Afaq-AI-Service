@@ -72,6 +72,15 @@ class OpportunityRepository:
         )
         return found is not None
 
+    async def exists_by_source_url(self, source_url: str) -> bool:
+        """يفحص وجود فرصة نظيفة بنفس رابط المصدر (لمنع التكرار عند تغيير العنوان)."""
+        if not source_url:
+            return False
+        found = await self._db.cleanedopportunity.find_first(
+            where={"source_url": source_url}
+        )
+        return found is not None
+
     async def count_cleaned_by_source(self, source_id: str) -> int:
         """يعدّ الفرص النظيفة لمصدر معيّن."""
         return await self._db.cleanedopportunity.count(where={"source_id": source_id})

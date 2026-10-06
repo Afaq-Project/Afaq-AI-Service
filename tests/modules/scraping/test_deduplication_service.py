@@ -85,9 +85,133 @@ def test_deduplication_scenario_b_different_scholarships_same_org_and_app_url():
 
 
 @pytest.mark.asyncio
+async def test_deduplication_test1_title_changed_same_source_url():
+    """Test 1: Same source URL with changed title must be detected as duplicate."""
+    service = DeduplicationService()
+
+    opp1 = {
+        "title": "ETH Excellence Scholarships",
+        "source_url": "https://scholars4dev.com/9763/eth-zurich-excellence-masters-scholarship-program",
+    }
+
+    opp2 = {
+        "title": "ETH Zurich Excellence Masters Scholarship Program",
+        "source_url": "https://scholars4dev.com/9763/eth-zurich-excellence-masters-scholarship-program",
+    }
+
+    h1 = service.generate_content_hash(opp1)
+    service.mark_as_seen(h1, opp1["source_url"])
+
+    h2 = service.generate_content_hash(opp2)
+    is_dup = await service.is_duplicate(opp2, h2)
+
+    assert (
+        is_dup is True
+    ), "Same source URL with different titles must be flagged as duplicate"
+
+
+@pytest.mark.asyncio
+async def test_deduplication_test2_same_application_url_different_source_urls():
+    """Test 2: Same application URL but different source URLs must NOT be automatically merged as duplicates."""
+    service = DeduplicationService()
+
+    opp1 = {
+        "title": "OAS Scholarships in Argentina",
+        "organization": "Organization of American States",
+        "country": "Argentina",
+        "source_url": "https://almin7.com/scholarship/oas-scholarships-in-argentina/",
+        "application_url": "https://www.oas.org/en/scholarships/",
+    }
+
+    opp2 = {
+        "title": "OAS Scholarships in Mexico",
+        "organization": "Organization of American States",
+        "country": "Mexico",
+        "source_url": "https://almin7.com/scholarship/oas-scholarships-in-mexico/",
+        "application_url": "https://www.oas.org/en/scholarships/",
+    }
+
+    h1 = service.generate_content_hash(opp1)
+    service.mark_as_seen(h1, opp1["source_url"])
+
+    h2 = service.generate_content_hash(opp2)
+    is_dup = await service.is_duplicate(opp2, h2)
+
+    assert (
+        is_dup is False
+    ), "Distinct opportunities sharing the same application portal URL must NOT be duplicates"
+
+
+@pytest.mark.asyncio
+async def test_deduplication_test3_exact_same_opportunity():
+    """Test 3: Exact same opportunity fields must be detected as duplicate."""
+    service = DeduplicationService()
+
+    opp = {
+        "title": "Chevening Scholarships UK",
+        "organization": "UK Foreign Office",
+        "country": "United Kingdom",
+        "source_url": "https://scholars4dev.com/3299/british-chevening-scholarships/",
+    }
+
+    h = service.generate_content_hash(opp)
+    assert await service.is_duplicate(opp, h) is False
+
+    service.mark_as_seen(h, opp["source_url"])
+    assert await service.is_duplicate(opp, h) is True
+
+
+@pytest.mark.asyncio
+async def test_deduplication_test4_fallback_without_source_url():
+    """Test 4: Fallback deduplication without source_url using composite title+org+country."""
+    service = DeduplicationService()
+
+    opp1 = {
+        "title": "Fulbright Foreign Student Program",
+        "organization": "US Department of State",
+        "country": "USA",
+    }
+
+    opp2 = {
+        "title": "Fulbright Foreign Student Program",
+        "organization": "US Department of State",
+        "country": "USA",
+    }
+
+    h1 = service.generate_content_hash(opp1)
+    service.mark_as_seen(h1)
+
+    h2 = service.generate_content_hash(opp2)
+    assert await service.is_duplicate(opp2, h2) is True
+
+
+@pytest.mark.asyncio
+async def test_deduplication_test5_url_normalization():
+    """Test 5: URL normalization resilient to trailing slashes."""
+    service = DeduplicationService()
+
+    opp1 = {
+        "title": "Gates Cambridge Scholarships",
+        "source_url": "https://scholars4dev.com/2043/gates-scholarships/",
+    }
+
+    opp2 = {
+        "title": "Gates Cambridge Scholarships Program",
+        "source_url": "https://scholars4dev.com/2043/gates-scholarships",
+    }
+
+    h1 = service.generate_content_hash(opp1)
+    service.mark_as_seen(h1, opp1["source_url"])
+
+    h2 = service.generate_content_hash(opp2)
+    assert await service.is_duplicate(opp2, h2) is True
+
+
+@pytest.mark.asyncio
 async def test_deduplication_batch_cache_and_db():
     mock_repo = MagicMock()
     mock_repo.exists_by_content_hash = AsyncMock(return_value=False)
+    mock_repo.exists_by_source_url = AsyncMock(return_value=False)
 
     service = DeduplicationService(opportunity_repo=mock_repo)
 
