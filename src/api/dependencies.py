@@ -14,6 +14,9 @@ from src.modules.core.database.prisma_client import get_client
 from src.modules.core.database.repositories.conversation_repository import (
     ConversationRepository,
 )
+from src.modules.core.database.repositories.match_score_repository import (
+    MatchScoreRepository,
+)
 from src.modules.core.database.repositories.opportunity_repository import (
     OpportunityRepository,
 )
@@ -21,6 +24,8 @@ from src.modules.infrastructure.llm.providers import (
     get_chat_model,
     get_structured_client,
 )
+from src.modules.matching.services.matching_service import MatchingService
+from src.modules.matching.services.user_profile_reader import UserProfileReader
 
 
 def get_api_key_service() -> ApiKeyService:
@@ -78,4 +83,18 @@ def get_essay_review_service() -> EssayReviewService:
     return EssayReviewService(
         llm=get_structured_client(),
         opportunities=OpportunityRepository(get_client()),
+    )
+
+
+def get_user_profile_reader() -> UserProfileReader:
+    """Returns UserProfileReader configured with PROFILE_API_DATABASE_URL."""
+    return UserProfileReader()
+
+
+def get_matching_service() -> MatchingService:
+    db = get_client()
+    return MatchingService(
+        profile_reader=get_user_profile_reader(),
+        opportunity_repo=OpportunityRepository(db),
+        match_score_repo=MatchScoreRepository(db),
     )
