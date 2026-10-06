@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any
 
@@ -34,6 +35,7 @@ class ScraperService:
         normalization_service: NormalizationService | None = None,
         deduplication_service: DeduplicationService | None = None,
         webhook_client: WebhookClient | None = None,
+        gemini_generator: Any | None = None,
         settings: Settings | None = None,
     ) -> None:
         self._db = db
@@ -46,6 +48,10 @@ class ScraperService:
         self._deduplication_service = deduplication_service or DeduplicationService(
             self._opportunity_repo
         )
+
+        from ..templates.template_generator import GeminiTemplateGenerator
+
+        self._gemini_generator = gemini_generator or GeminiTemplateGenerator()
 
         app_settings = settings or get_settings()
         self._webhook_client = webhook_client or WebhookClient(
@@ -143,27 +149,179 @@ class ScraperService:
 
     async def _process_source(self, source: Any) -> int:
         """يعالج مصدراً واحداً: يجلب، يصفي بالـ is_opportunity، يحلل، ينظف، يوحّد، ويخزن الفرص."""
+        from ..adapters.generic_template_adapter import GenericTemplateAdapter
+        from ..templates.change_detector import ChangeDetectionStatus, PageFetchResult
+
         source_name = getattr(source, "name", "wordpress_api")
         source_id = getattr(source, "id", "")
+        method = getattr(source, "method", "wordpress_api")
+        base_url = getattr(source, "base_url", "")
+        template_input = getattr(source, "template", None)
+        if not template_input or not isinstance(template_input, (dict, str)):
+            raw_cfg = getattr(source, "template_config", None)
+            if isinstance(raw_cfg, (dict, str)):
+                template_input = raw_cfg
+            else:
+                src_cfg = getattr(source, "source_config", None)
+                if isinstance(src_cfg, dict):
+                    template_input = src_cfg.get("template")
+                else:
+                    template_input = None
+        raw_baseline = getattr(source, "baseline_score", None)
+        baseline_score = (
+            float(raw_baseline) if isinstance(raw_baseline, (int, float)) else None
+        )
+        pagination_config = getattr(source, "pagination_config", {}) or {}
+        if not isinstance(pagination_config, dict):
+            pagination_config = {}
+
         source_config = {
-            "base_url": getattr(source, "base_url", ""),
+            "base_url": base_url,
             "api_endpoint": getattr(source, "api_endpoint", ""),
-            "method": getattr(source, "method", "wordpress_api"),
-            "pagination_config": getattr(source, "pagination_config", {}) or {},
+            "method": method,
+            "pagination_config": pagination_config,
             "field_mapping": getattr(source, "field_mapping", {}) or {},
+            "template": template_input,
+            "baseline_score": baseline_score,
         }
 
-        # 1. Get adapter
+        # Scenario C: Template Missing Check BEFORE creating adapter
+        is_template_source = (
+            method in ("generic_template", "template")
+            or "template" in source_name.lower()
+        )
+        if is_template_source and not template_input:
+            logger.warning(
+                "No active template found for template source '%s'. Fetching HTML to generate candidate template via Gemini...",
+                source_name,
+            )
+            # Fetch listing HTML sample directly
+            listing_fetches = []
+            if base_url:
+                try:
+                    import httpx
+
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        resp = await client.get(base_url)
+                        html_text = resp.text
+                        listing_fetches.append(
+                            PageFetchResult(
+                                url=base_url,
+                                success=True,
+                                status_code=resp.status_code,
+                                html=html_text,
+                            )
+                        )
+                except Exception as fetch_exc:
+                    logger.warning(
+                        "Failed to fetch HTML for candidate generation for %s: %s",
+                        source_name,
+                        fetch_exc,
+                    )
+
+            candidate_result = await self._gemini_generator.generate_candidate(
+                detail_fetches=[],
+                listing_fetches=listing_fetches,
+                current_template=None,
+                source_name=source_name,
+                base_url=base_url,
+            )
+            logger.info(
+                "Candidate template generated for source '%s' with status: %s (Valid: %s)",
+                source_name,
+                candidate_result.status.value,
+                candidate_result.valid,
+            )
+            return 0  # No extraction without active template
+
+        # Get adapter for existing template / specialized adapter
         adapter = AdapterFactory.get_adapter(source_name, source_config=source_config)
         cleaned_count = 0
 
         try:
-            # 2. Fetch raw items
-            limit = 50
-            if isinstance(source_config["pagination_config"], dict):
-                limit = source_config["pagination_config"].get("limit", 50)
+            limit = (
+                pagination_config.get("limit", 50)
+                if isinstance(pagination_config, dict)
+                else 50
+            )
 
-            raw_items = await adapter.fetch_with_details(limit=limit)
+            # Scenario A & B: Listing Content Change Check for GenericTemplateAdapter
+            if isinstance(adapter, GenericTemplateAdapter):
+                previous_hash = pagination_config.get("last_listing_hash")
+                raw_items = await adapter.fetch_with_details(
+                    limit=limit, previous_hash=previous_hash
+                )
+
+                if previous_hash and not adapter.has_listing_content_changed(
+                    previous_hash
+                ):
+                    logger.info(
+                        "Listing content unchanged for template source '%s' (hash: %s). Skipping detail page fetching and extraction.",
+                        source_name,
+                        previous_hash,
+                    )
+                    return 0  # Scenario A: Skip detail fetching & extraction
+
+                # Content changed -> Scenario B: Update listing hash in DB
+                if self._source_repo and adapter.last_listing_hash and source_id:
+                    try:
+                        res = self._source_repo.update_last_listing_hash(
+                            source_id, adapter.last_listing_hash
+                        )
+                        if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
+                            await res
+                    except Exception as hash_exc:
+                        logger.warning(
+                            "Failed to persist listing hash for %s: %s",
+                            source_name,
+                            hash_exc,
+                        )
+            else:
+                raw_items = await adapter.fetch_with_details(limit=limit)
+
+            # Scenario D: Template Change & Degradation Detection
+            if isinstance(adapter, GenericTemplateAdapter):
+                detection_result = adapter.run_change_detection(
+                    baseline_score=baseline_score
+                )
+                status = detection_result.status
+
+                if status == ChangeDetectionStatus.VALID:
+                    logger.info(
+                        "Template change detection passed for source '%s' (Quality score: %.2f)",
+                        source_name,
+                        detection_result.quality_score,
+                    )
+                elif status in (
+                    ChangeDetectionStatus.STRUCTURE_CHANGED,
+                    ChangeDetectionStatus.EXTRACTION_DEGRADED,
+                ):
+                    logger.warning(
+                        "Template structure change/degradation detected for source '%s' (Status: %s). Invoking Gemini for Candidate Template...",
+                        source_name,
+                        status.value,
+                    )
+                    candidate_result = await self._gemini_generator.generate_candidate(
+                        detail_fetches=adapter.last_detail_fetches,
+                        listing_fetches=adapter.last_listing_fetches,
+                        current_template=adapter.template,
+                        source_name=source_name,
+                        base_url=adapter.base_url,
+                        baseline_score=baseline_score,
+                        failed_fields=detection_result.errors,
+                    )
+                    logger.info(
+                        "Candidate template generated for source '%s' with status: %s (Quality Score: %.2f)",
+                        source_name,
+                        candidate_result.status.value,
+                        candidate_result.quality_score,
+                    )
+                else:
+                    logger.info(
+                        "Template evaluation status for '%s': %s",
+                        source_name,
+                        status.value,
+                    )
 
             # 3. Process each raw item with opportunity filtering
             for item in raw_items:
@@ -227,7 +385,9 @@ class ScraperService:
                         continue
 
                     # Register in deduplication service
-                    self._deduplication_service.mark_as_seen(content_hash)
+                    self._deduplication_service.mark_as_seen(
+                        content_hash, normalized.get("source_url")
+                    )
 
                     # Store cleaned opportunity
                     if self._opportunity_repo and raw_id and raw_id != "mock-raw-id":

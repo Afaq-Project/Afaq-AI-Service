@@ -5,6 +5,7 @@ from src.modules.infrastructure.http.base_http_client import BaseHttpClient
 
 from .almin7_adapter import Almin7Adapter
 from .base_adapter import BaseAdapter
+from .generic_template_adapter import GenericTemplateAdapter
 from .grabscholarship_adapter import GrabScholarshipAdapter
 from .scholars4dev_adapter import Scholars4DevAdapter
 from .wordpress_api_adapter import WordPressApiAdapter
@@ -23,6 +24,8 @@ class AdapterFactory:
         "wordpress_api": WordPressApiAdapter,
         "wp_api": WordPressApiAdapter,
         "wordpress": WordPressApiAdapter,
+        "generic_template": GenericTemplateAdapter,
+        "template": GenericTemplateAdapter,
     }
 
     @classmethod
@@ -49,11 +52,11 @@ class AdapterFactory:
         # 1. Direct name match
         adapter_cls = cls._registry.get(name_key)
 
-        # 2. Check by method (e.g. method="wordpress_api", method="html")
+        # 2. Check by method (e.g. method="wordpress_api", method="html", method="generic_template")
         if adapter_cls is None and method_key:
             adapter_cls = cls._registry.get(method_key)
 
-        # 3. Check for keywords in name or method
+        # 3. Check for keywords in name, method, or presence of template config
         if adapter_cls is None:
             if "almin7" in name_key:
                 adapter_cls = Almin7Adapter
@@ -61,6 +64,12 @@ class AdapterFactory:
                 adapter_cls = GrabScholarshipAdapter
             elif "scholars4dev" in name_key:
                 adapter_cls = Scholars4DevAdapter
+            elif (
+                "template" in name_key
+                or "template" in method_key
+                or config.get("template") is not None
+            ):
+                adapter_cls = GenericTemplateAdapter
             elif (
                 "wordpress" in name_key or "wp" in name_key or "wordpress" in method_key
             ):
@@ -78,6 +87,18 @@ class AdapterFactory:
                 method_key,
             )
             adapter_cls = WordPressApiAdapter
+
+        if adapter_cls is GenericTemplateAdapter:
+            template = config.get("template")
+            if not template:
+                raise ValueError(
+                    f"GenericTemplateAdapter requires a 'template' dictionary or file path in source_config for source '{source_name}'."
+                )
+            return GenericTemplateAdapter(
+                template=template,
+                source_config=config,
+                http_client=http_client,
+            )
 
         return adapter_cls(source_config=config, http_client=http_client)
 

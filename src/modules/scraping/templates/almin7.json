@@ -1,0 +1,232 @@
+{
+  "$schema_version": "1.0",
+  "source_name": "almin7",
+  "display_name": "Almin7 Scholarships",
+  "base_url": "https://almin7.com",
+  "description": "Declarative scraping extraction template for Almin7 scholarship pages",
+  "listing_rules": {
+    "card_selector": "article.al7-scholarship-page-card, article.al7-archive-card",
+    "fields": {
+      "title": {
+        "selector": "h2.al7-archive-posttitle a, h2 a, h3 a",
+        "extract": "text",
+        "required": true
+      },
+      "source_url": {
+        "selector": "h2.al7-archive-posttitle a, h2 a, h3 a",
+        "extract": "href",
+        "required": true
+      },
+      "badge": {
+        "selector": "span.al7-archive-type",
+        "extract": "text",
+        "required": false
+      },
+      "excerpt": {
+        "selector": "p.al7-archive-excerpt",
+        "extract": "text",
+        "required": false
+      },
+      "country": {
+        "selector": "div.al7-archive-taxline a, div.al7-archive-taxline",
+        "extract": "text",
+        "required": false
+      },
+      "published_at": {
+        "selector": "div.al7-archive-cardfoot span",
+        "extract": "text",
+        "required": false
+      },
+      "application_url": {
+        "selector": "div.al7-archive-cardfoot a.al7-archive-action",
+        "extract": "href",
+        "required": false
+      }
+    },
+    "opportunity_filter": {
+      "exclude_badge_keywords": ["مقال", "مقالات"],
+      "exclude_classes": [
+        "category-articles",
+        "category-specialties",
+        "category-university-rankings",
+        "category-study-abroad"
+      ],
+      "exclude_url_patterns": [
+        "/specialization/",
+        "/category/",
+        "/university-rankings/",
+        "/study-abroad/",
+        "/blog/",
+        "/articles/"
+      ]
+    }
+  },
+  "detail_rules": {
+    "fields": {
+      "title": {
+        "selector": "h1.al7-single-title, h1",
+        "extract": "text",
+        "required": true
+      },
+      "content": {
+        "selector": "div.al7-single-content",
+        "extract": "html",
+        "required": false
+      },
+      "description": {
+        "selector": "div.al7-single-content",
+        "extract": "text",
+        "required": false
+      },
+      "application_url": {
+        "selector": "a.al7-single-apply-beam, a.al7-apply-btn",
+        "extract": "href",
+        "required": false
+      },
+      "published_at": {
+        "selector": "div.al7-single-meta-cloud span",
+        "extract": "text",
+        "required": false
+      }
+    },
+    "taxonomy_rules": {
+      "container_selector": "div.al7-single-tax-panel",
+      "item_selector": "a.al7-single-tax-pill, span.al7-single-tax-pill",
+      "mapping": {
+        "country": {
+          "url_markers": ["/location/", "/country/"],
+          "class_markers": ["location"]
+        },
+        "organization": {
+          "url_markers": ["/university/", "/universities/"],
+          "class_markers": ["university"]
+        },
+        "nationalities": {
+          "url_markers": ["/nationality/"],
+          "class_markers": ["nationality"],
+          "filter_generic_dumps": true,
+          "generic_threshold": 15,
+          "generic_list": [
+            "إريتريا",
+            "الأردن",
+            "الإمارات",
+            "البحرين",
+            "الجزائر",
+            "السعودية",
+            "السودان",
+            "الصومال",
+            "العراق",
+            "الكويت",
+            "المغرب",
+            "النيجر",
+            "اليمن",
+            "تشاد",
+            "تونس",
+            "جزر القمر",
+            "جنوب السودان",
+            "جيبوتي",
+            "سوريا",
+            "عُمان",
+            "فلسطين",
+            "قطر",
+            "لبنان",
+            "ليبيا",
+            "مالي",
+            "مصر",
+            "موريتانيا"
+          ],
+          "exclude_text_patterns": [
+            "(?i)(?:من\\s+)?(?:غير|دون|سوى)\\s+(?:المواطنين|حاملي\\s+الجنسية|جنسية|مواطني|حملة)\\s+\\w+",
+            "(?i)(?:جميع|كافة|مختلف|سائر)\\s+(?:الجنسيات|الدول|البلدان)",
+            "(?i)\\b(all\\s+nationalities|any\\s+nationality|international\\s+students|all\\s+countries)\\b"
+          ],
+          "specific_text_patterns": [
+            {
+              "pattern": "(?i)(?:(?:مخصصة|حصراً|فقط|خاصة|مقتصرة)\\s+(?:على\\s+)?(?:لـ?|بـ?)?(?:(?:للطلاب|بالطلاب|للطلبة|بالطلبة|للمواطنين|بالمواطنين|مواطني|أبناء|حاملي\\s+جنسية)\\s+)?|(?:للطلاب|بالطلاب|للطلبة|بالطلبة|للمواطنين|بالمواطنين|مواطني|أبناء|حاملي\\s+جنسية)\\s+)(?:ل?السعوديين|ل?السعودية|ل?سعودي)|(?:السعوديين|السعودية|سعودي\\s+الجنسية)\\s*(?:فقط|حصراً)",
+              "value": "السعودية"
+            },
+            {
+              "pattern": "(?i)(?:(?:مخصصة|حصراً|فقط|خاصة|مقتصرة)\\s+(?:على\\s+)?(?:لـ?|بـ?)?(?:(?:للطلاب|بالطلاب|للطلبة|بالطلبة|للمواطنين|بالمواطنين|مواطني|أبناء|حاملي\\s+جنسية)\\s+)?|(?:للطلاب|بالطلاب|للطلبة|بالطلبة|للمواطنين|بالمواطنين|مواطني|أبناء|حاملي\\s+جنسية)\\s+)(?:ل?مصر|ل?المصريين|ل?المصرية|ل?مصري)|(?:المصريين|المصرية|مصري\\s+الجنسية)\\s*(?:فقط|حصراً)",
+              "value": "مصر"
+            },
+            {
+              "pattern": "(?i)(?:(?:مخصصة|حصراً|فقط|خاصة|مقتصرة)\\s+(?:على\\s+)?(?:لـ?|بـ?)?(?:(?:للطلاب|بالطلاب|للطلبة|بالطلبة|للمواطنين|بالمواطنين|مواطني|أبناء|حاملي\\s+جنسية)\\s+)?|(?:للطلاب|بالطلاب|للطلبة|بالطلبة|للمواطنين|بالمواطنين|مواطني|أبناء|حاملي\\s+جنسية)\\s+)(?:ل?سوريا|ل?السوريين|ل?السورية|ل?سوري)|(?:السوريين|السورية|سوري\\s+الجنسية)\\s*(?:فقط|حصراً)",
+              "value": "سوريا"
+            },
+            {
+              "pattern": "(?i)(?:(?:مخصصة|حصراً|فقط|خاصة|مقتصرة)\\s+(?:على\\s+)?(?:لـ?|بـ?)?(?:(?:للطلاب|بالطلاب|للطلبة|بالطلبة|للمواطنين|بالمواطنين|مواطني|أبناء|حاملي\\s+جنسية)\\s+)?|(?:للطلاب|بالطلاب|للطلبة|بالطلبة|للمواطنين|بالمواطنين|مواطني|أبناء|حاملي\\s+جنسية)\\s+)(?:ل?فلسطين|ل?الفلسطينيين|ل?الفلسطينية|ل?فلسطيني)|(?:الفلسطينيين|الفلسطينية|فلسطيني\\s+الجنسية)\\s*(?:فقط|حصراً)",
+              "value": "فلسطين"
+            },
+            {
+              "pattern": "(?i)(?:(?:مخصصة|حصراً|فقط|خاصة|مقتصرة)\\s+(?:على\\s+)?(?:لـ?|بـ?)?(?:(?:للطلاب|بالطلاب|للطلبة|بالطلبة|للمواطنين|بالمواطنين|مواطني|أبناء|حاملي\\s+جنسية)\\s+)?|(?:للطلاب|بالطلاب|للطلبة|بالطلبة|للمواطنين|بالمواطنين|مواطني|أبناء|حاملي\\s+جنسية)\\s+)(?:ل?اليمن|ل?اليمنيين|ل?اليمنية|ل?يمني)|(?:اليمنيين|اليمنية|يمني\\s+الجنسية)\\s*(?:فقط|حصراً)",
+              "value": "اليمن"
+            },
+            {
+              "pattern": "(?i)(?:(?:مخصصة|حصراً|فقط|خاصة|مقتصرة)\\s+(?:على\\s+)?(?:لـ?|بـ?)?(?:(?:للطلاب|بالطلاب|للطلبة|بالطلبة|للمواطنين|بالمواطنين|مواطني|أبناء|حاملي\\s+جنسية)\\s+)?|(?:للطلاب|بالطلاب|للطلبة|بالطلبة|للمواطنين|بالمواطنين|مواطني|أبناء|حاملي\\s+جنسية)\\s+)(?:ل?الأردن|ل?الأردنيين|ل?الأردنية|ل?أردني)|(?:الأردنيين|الأردنية|أردني\\s+الجنسية)\\s*(?:فقط|حصراً)",
+              "value": "الأردن"
+            }
+          ]
+        }
+      }
+    },
+    "section_rules": {
+      "eligibility": {
+        "heading_keywords": [
+          "شروط التقديم",
+          "شروط القبول",
+          "متطلبات التقديم",
+          "متطلبات القبول",
+          "شروط الأهلية",
+          "معايير الأهلية",
+          "من يمكنه التقديم",
+          "الأهلية",
+          "eligibility",
+          "requirements",
+          "admission requirements"
+        ],
+        "extract": "section_text"
+      },
+      "fields_of_study": {
+        "heading_keywords": [
+          "التخصصات المتاحة",
+          "التخصصات",
+          "البرامج الدراسية",
+          "كليات وتخصصات",
+          "fields of study",
+          "specializations"
+        ],
+        "extract": "list_items"
+      },
+      "funding": {
+        "heading_keywords": [
+          "ما الذي تقدمه",
+          "التمويل",
+          "تغطية",
+          "المزايا",
+          "فوائد المنحة",
+          "funding",
+          "benefits",
+          "coverage"
+        ],
+        "extract": "section_text"
+      },
+      "deadline": {
+        "heading_keywords": [
+          "المواعيد النهائية",
+          "الموعد النهائي",
+          "آخر موعد للتقديم",
+          "اخر موعد للتقديم",
+          "آخر موعد للتسجيل",
+          "اخر موعد للتسجيل",
+          "تاريخ انتهاء التقديم",
+          "موعد انتهاء التقديم",
+          "تاريخ الإغلاق",
+          "deadline",
+          "application deadline",
+          "closing date"
+        ],
+        "extract": "section_text"
+      }
+    }
+  }
+}
