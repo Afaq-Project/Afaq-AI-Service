@@ -5,6 +5,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from prisma import errors as prisma_errors
 from src.api.dependencies import (
     get_api_key_service,
     get_chat_service,
@@ -222,6 +223,23 @@ class TestChatEndpoint:
         assert response.status_code == status_code
         assert response.json() == {
             "error": {"code": code, "message": ERROR_MESSAGES[code]}
+        }
+
+
+class TestDatabaseFailures:
+    def test_database_error_becomes_a_friendly_503(self):
+        chat = FakeChatService(error=prisma_errors.DataError({"error": "pool timeout"}))
+
+        response = TestClient(build_app(chat=chat)).post(
+            "/api/v1/ai/chat", json=chat_body()
+        )
+
+        assert response.status_code == 503
+        assert response.json() == {
+            "error": {
+                "code": "database_unavailable",
+                "message": ERROR_MESSAGES["database_unavailable"],
+            }
         }
 
 
