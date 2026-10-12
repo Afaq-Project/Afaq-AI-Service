@@ -37,6 +37,36 @@ FROM public.v_user_full_profile
 WHERE user_id = $1::uuid;
 """
 
+SELECT_ALL_USER_PROFILES_QUERY = """
+SELECT
+    user_id,
+    email,
+    first_name,
+    last_name,
+    full_name,
+    date_of_birth,
+    nationality,
+    education_level,
+    current_country,
+    current_city,
+    phone,
+    experience_level,
+    has_financial_need,
+    career_goals,
+    profile_photo_url,
+    completion_pct,
+    is_matchable,
+    preferences,
+    is_draft,
+    skills,
+    languages,
+    educations,
+    fields_of_study
+FROM public.v_user_full_profile
+ORDER BY user_id
+LIMIT $1 OFFSET $2;
+"""
+
 
 class UserProfileReader:
     """Read-only client for retrieving user profiles from the main database.
@@ -111,3 +141,33 @@ class UserProfileReader:
             return None
 
         return UserProfileDTO(**rows[0])
+
+    async def get_all_profiles(
+        self, limit: int = 100, offset: int = 0
+    ) -> list[UserProfileDTO]:
+        """Retrieves a paginated list of user profiles from public.v_user_full_profile.
+
+        Args:
+            limit: Maximum number of profiles to return.
+            offset: Number of profiles to skip.
+
+        Returns:
+            List of UserProfileDTO objects.
+        """
+        client = await self.get_client()
+        try:
+            rows: list[dict[str, Any]] = await client.query_raw(
+                SELECT_ALL_USER_PROFILES_QUERY,
+                limit,
+                offset,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to query all user profiles (limit=%d, offset=%d): %s",
+                limit,
+                offset,
+                exc,
+            )
+            return []
+
+        return [UserProfileDTO(**row) for row in rows]

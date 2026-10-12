@@ -10,6 +10,12 @@ from src.modules.matching.services.lifecycle_service import (
     is_within_visibility_window,
 )
 from src.modules.matching.services.match_calculator import MatchCalculator
+from src.modules.matching.services.matching_service import (
+    MatchingService,
+    OpportunityNotFoundError,
+    RematchAlreadyRunningError,
+    UserNotFoundError,
+)
 from src.modules.matching.services.opportunity_requirements_matcher import (
     OpportunityRequirementsMatcher,
     OpportunityRequirementsMatchResult,
@@ -24,11 +30,15 @@ __all__ = [
     "FeedRanker",
     "HardFilterService",
     "MatchCalculator",
+    "MatchingService",
+    "OpportunityNotFoundError",
     "OpportunityRequirementsMatchResult",
     "OpportunityRequirementsMatcher",
+    "RematchAlreadyRunningError",
     "RequirementExtractor",
     "RequirementMatchDecision",
     "SingleRequirementEvaluation",
+    "UserNotFoundError",
     "UserProfileReader",
     "filter_opportunities_by_lifecycle",
     "is_opportunity_active",
