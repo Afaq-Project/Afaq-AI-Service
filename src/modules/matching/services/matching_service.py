@@ -1,3 +1,9 @@
+"""High-level Matching orchestration service for Afaq AI Matching Engine.
+
+Provides unified interface for feed generation, individual match score calculations,
+batch user/opportunity matching, full rematching, database persistence, and webhook notifications.
+"""
+
 import asyncio
 import logging
 from typing import Any
@@ -13,6 +19,11 @@ from src.modules.infrastructure.webhook.webhook_client import (
     MatchingCompletePayload,
     WebhookClient,
 )
+from src.modules.matching.models import (
+    FeedRankingResultDTO,
+    MatchScoreResultDTO,
+    UserProfileDTO,
+)
 from src.modules.matching.services.feed_ranker import FeedRanker
 from src.modules.matching.services.hard_filter_service import HardFilterService
 from src.modules.matching.services.lifecycle_service import is_within_visibility_window
@@ -22,39 +33,54 @@ from src.modules.matching.services.user_profile_reader import UserProfileReader
 logger = logging.getLogger(__name__)
 
 
-class UserNotFoundError(Exception):
+class UserProfileNotFoundError(Exception):
+    """Raised when a user profile cannot be found in the database view."""
+
+    code = "user_profile_not_found"
+
+
+class UserNotFoundError(UserProfileNotFoundError):
     """Raised when a specified user profile does not exist."""
+
+    code = "user_not_found"
 
 
 class OpportunityNotFoundError(Exception):
-    """Raised when a specified opportunity does not exist."""
+    """Raised when an opportunity cannot be found in the database."""
+
+    code = "opportunity_not_found"
 
 
 class RematchAlreadyRunningError(Exception):
     """Raised when a full rematch operation is already in progress."""
 
+    code = "rematch_already_running"
 
-def _to_opportunity_dict(opp: Any) -> dict[str, Any]:
+
+def _to_dict(record: Any) -> dict[str, Any]:
     """Converts a database model or dictionary opportunity to a standard dict."""
-    if isinstance(opp, dict):
-        return opp
-    if hasattr(opp, "model_dump") and callable(opp.model_dump):
-        return opp.model_dump()
-    if hasattr(opp, "dict") and callable(opp.dict):
-        return opp.dict()
-    if hasattr(opp, "__dict__"):
-        return {k: v for k, v in opp.__dict__.items() if not k.startswith("_")}
-    return dict(opp)
+    if isinstance(record, dict):
+        return record
+    if hasattr(record, "model_dump") and callable(record.model_dump):
+        return record.model_dump()
+    if hasattr(record, "dict") and callable(record.dict):
+        return record.dict()
+    if hasattr(record, "__dict__"):
+        return {k: v for k, v in record.__dict__.items() if not k.startswith("_")}
+    return dict(record)
+
+
+_to_opportunity_dict = _to_dict
 
 
 class MatchingService:
-    """Orchestrates matching calculations, database persistence, and webhook notifications."""
+    """Orchestrates matching calculations, database persistence, feed ranking, and webhook notifications."""
 
     def __init__(
         self,
         profile_reader: UserProfileReader,
         opportunity_repo: OpportunityRepository,
-        match_score_repo: MatchScoreRepository,
+        match_score_repo: MatchScoreRepository | None = None,
         webhook_client: WebhookClient | None = None,
         feed_ranker: FeedRanker | None = None,
         match_calculator: MatchCalculator | None = None,
@@ -69,6 +95,9 @@ class MatchingService:
         self._ranker = feed_ranker or FeedRanker(
             match_calculator=self._calc, hard_filter_service=self._filter
         )
+        self._match_calculator = self._calc
+        self._feed_ranker = self._ranker
+        self._hard_filter_service = self._filter
         self._rematch_lock = asyncio.Lock()
 
     @property
@@ -90,7 +119,7 @@ class MatchingService:
 
         # 2. Retrieve active opportunities within visibility window
         raw_opps = await self._opportunity_repo.find_within_visibility_window()
-        opportunities = [_to_opportunity_dict(opp) for opp in raw_opps]
+        opportunities = [_to_dict(opp) for opp in raw_opps]
 
         # 3. Evaluate and rank opportunities using existing FeedRanker
         ranking_result = self._ranker.rank_opportunities(
@@ -119,7 +148,7 @@ class MatchingService:
             )
 
         persisted_count = 0
-        if scores_to_persist:
+        if scores_to_persist and self._match_score_repo:
             persisted_count = await self._match_score_repo.upsert_many_scores(
                 scores_to_persist
             )
@@ -164,7 +193,7 @@ class MatchingService:
                 f"Opportunity not found for opportunity_id: {opp_uuid_str}"
             )
 
-        opp_dict = _to_opportunity_dict(raw_opp)
+        opp_dict = _to_dict(raw_opp)
 
         # Verify visibility window
         deadline = opp_dict.get("deadline")
@@ -224,7 +253,7 @@ class MatchingService:
 
         # 3. Persist matching scores
         persisted_count = 0
-        if scores_to_persist:
+        if scores_to_persist and self._match_score_repo:
             persisted_count = await self._match_score_repo.upsert_many_scores(
                 scores_to_persist
             )
@@ -264,7 +293,7 @@ class MatchingService:
 
             # 1. Fetch all active opportunities within visibility window
             raw_opps = await self._opportunity_repo.find_within_visibility_window()
-            opportunities = [_to_opportunity_dict(opp) for opp in raw_opps]
+            opportunities = [_to_dict(opp) for opp in raw_opps]
 
             offset = 0
             total_users_processed = 0
@@ -311,7 +340,7 @@ class MatchingService:
                             }
                         )
 
-                if batch_scores:
+                if batch_scores and self._match_score_repo:
                     count = await self._match_score_repo.upsert_many_scores(
                         batch_scores
                     )
@@ -348,3 +377,93 @@ class MatchingService:
                 "opportunities_processed": len(opportunities),
                 "matches_persisted": total_matches_persisted,
             }
+
+    async def get_feed_for_user(
+        self,
+        user_id: UUID | str,
+        filter_hard_eligibility: bool = True,
+        enable_relaxation: bool = True,
+        limit: int | None = None,
+    ) -> FeedRankingResultDTO:
+        """Retrieves user profile and returns ranked opportunities feed."""
+        profile = await self._profile_reader.get_profile_by_user_id(user_id)
+        if profile is None:
+            raise UserProfileNotFoundError(
+                f"User profile with ID '{user_id}' was not found."
+            )
+
+        # Retrieve eligible opportunities from repository within visibility window
+        raw_opps = await self._opportunity_repo.find_within_visibility_window()
+        opportunities = [_to_dict(opp) for opp in raw_opps]
+
+        result = self._feed_ranker.rank_opportunities(
+            user_profile=profile,
+            opportunities=opportunities,
+            filter_hard_eligibility=filter_hard_eligibility,
+            enable_relaxation=enable_relaxation,
+        )
+
+        if limit is not None and limit > 0:
+            result.ranked_opportunities = result.ranked_opportunities[:limit]
+
+        return result
+
+    async def calculate_match(
+        self,
+        user_id: UUID | str | None = None,
+        user_profile: UserProfileDTO | None = None,
+        opportunity_id: UUID | str | None = None,
+        opportunity: dict[str, Any] | None = None,
+    ) -> MatchScoreResultDTO:
+        """Calculates match score between a user profile and an opportunity."""
+        # 1. Resolve Profile
+        profile: UserProfileDTO | None = user_profile
+        if profile is None and user_id is not None:
+            profile = await self._profile_reader.get_profile_by_user_id(user_id)
+            if profile is None:
+                raise UserProfileNotFoundError(
+                    f"User profile with ID '{user_id}' was not found."
+                )
+
+        if profile is None:
+            raise ValueError(
+                "Either 'user_id' or 'user_profile' must be provided for match calculation."
+            )
+
+        # 2. Resolve Opportunity
+        opp_data: dict[str, Any] | None = opportunity
+        if opp_data is None and opportunity_id is not None:
+            opp_record = await self._opportunity_repo.get_cleaned_by_id(
+                str(opportunity_id)
+            )
+            if opp_record is None:
+                raise OpportunityNotFoundError(
+                    f"Opportunity with ID '{opportunity_id}' was not found."
+                )
+            opp_data = _to_dict(opp_record)
+
+        if opp_data is None:
+            raise ValueError(
+                "Either 'opportunity_id' or 'opportunity' must be provided for match calculation."
+            )
+
+        return self._match_calculator.calculate_match_score(profile, opp_data)
+
+    async def persist_match_score(
+        self,
+        user_id: UUID | str,
+        opportunity_id: UUID | str,
+        match_score: MatchScoreResultDTO,
+        calculation_version: int = 1,
+    ) -> Any:
+        """Persists a calculated match score to the Opportunities database."""
+        if self._match_score_repo is None:
+            raise RuntimeError(
+                "MatchScoreRepository is not configured on MatchingService."
+            )
+        return await self._match_score_repo.save_match_score(
+            user_id=user_id,
+            opportunity_id=opportunity_id,
+            match_score=match_score,
+            calculation_version=calculation_version,
+        )

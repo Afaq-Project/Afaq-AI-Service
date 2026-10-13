@@ -321,8 +321,8 @@ class TestUserProfileReader:
         call_args = mock_prisma_client.query_raw.call_args[0]
         query_sql = call_args[0]
         assert "SELECT" in query_sql
-        assert "FROM public.v_user_full_profile" in query_sql
-        assert "WHERE user_id = $1::uuid" in query_sql
+        assert "FROM public.users u" in query_sql
+        assert "WHERE u.id = $1::uuid;" in query_sql
         assert "INSERT" not in query_sql
         assert "UPDATE" not in query_sql
         assert "DELETE" not in query_sql

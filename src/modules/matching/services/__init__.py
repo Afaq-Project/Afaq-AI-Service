@@ -15,6 +15,7 @@ from src.modules.matching.services.matching_service import (
     OpportunityNotFoundError,
     RematchAlreadyRunningError,
     UserNotFoundError,
+    UserProfileNotFoundError,
 )
 from src.modules.matching.services.opportunity_requirements_matcher import (
     OpportunityRequirementsMatcher,
@@ -39,6 +40,7 @@ __all__ = [
     "RequirementMatchDecision",
     "SingleRequirementEvaluation",
     "UserNotFoundError",
+    "UserProfileNotFoundError",
     "UserProfileReader",
     "filter_opportunities_by_lifecycle",
     "is_opportunity_active",

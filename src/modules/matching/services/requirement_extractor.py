@@ -151,10 +151,11 @@ class RequirementExtractor:
         """
         results: list[ExtractedRequirement] = []
 
-        # Pattern: open to all
+        # Pattern: open to all (English and Arabic)
         open_pattern = re.compile(
             r"(?i)\b(?:open\s+to\s+all\s+(?:nationalities|countries|international\s+students)?|"
-            r"students\s+from\s+all\s+(?:over\s+the\s+world|countries)|worldwide|global)",
+            r"students\s+from\s+all\s+(?:over\s+the\s+world|countries)|worldwide|global|"
+            r"مفتوحة\s+لجميع\s+(?:الجنسيات|الطلاب|البلدان|الدول)|كافة\s+الجنسيات|جميع\s+الدول|لكافة\s+الطلاب)",
         )
         m = open_pattern.search(full_text)
         if m:
@@ -175,9 +176,14 @@ class RequirementExtractor:
         country_req_pattern = re.compile(
             r"(?i)\b(?:citizens?\s+of|nationals?\s+of|students?\s+from|applicants?\s+from)\s+([A-Z][^.\n,;]{3,60})",
         )
-        # Pattern: 'Target group: [text]' from Scholars4Dev
+        # Pattern: 'Target group: [text]' (English and Arabic)
         target_group_pattern = re.compile(
-            r"(?i)(?:Target\s+group[s]?|Eligible\s+Nationalit(?:y|ies)|Eligible\s+Countr(?:y|ies))[:\s]+([^\n]{5,300})",
+            r"(?i)(?:Target\s+group[s]?|Eligible\s+Nationalit(?:y|ies)|Eligible\s+Countr(?:y|ies)|"
+            r"الفئة\s+المستهدفة|الدول\s+المستهدفة|الجنسيات\s+المؤهلة|الجنسية|المواطنون|للطلاب|للطلبة)[:\s]+([^\n]{2,300})",
+        )
+        # Pattern: Arabic direct nationality phrasing (e.g. مخصصة للطلاب الفلسطينيين / الجنسية الفلسطينية)
+        ar_direct_nationality_pattern = re.compile(
+            r"(?i)\b(?:مخصصة\s+للطلاب\s+|مخصصة\s+للطلبة\s+|للطلبة\s+|للطلاب\s+|حاملي\s+الجنسية\s+|الجنسية\s+)([^\n,.؛:]{2,60})",
         )
         # Pattern: exclusion — 'not [country] citizens'
         exclusion_pattern = re.compile(
@@ -194,6 +200,8 @@ class RequirementExtractor:
                 any(tok in raw.lower() for tok in OPEN_TO_ALL_NATIONALITIES)
                 or "any country" in raw.lower()
                 or "all countries" in raw.lower()
+                or "جميع الدول" in raw
+                or "كافة الجنسيات" in raw
             )
             if countries or is_open:
                 results.append(
@@ -214,6 +222,27 @@ class RequirementExtractor:
                             if not is_open
                             else "Open to all nationalities"
                         ),
+                        confidence=ConfidenceLevel.HIGH,
+                    )
+                )
+                return results
+
+        # Try Arabic direct nationality phrasing
+        m = ar_direct_nationality_pattern.search(eligibility_text or full_text)
+        if m:
+            raw = m.group(1).strip()
+            countries = self._parse_country_list(raw)
+            if countries:
+                results.append(
+                    ExtractedRequirement(
+                        req_type=RequirementType.NATIONALITY,
+                        status=RequirementStatus.REQUIRED,
+                        condition=RequirementCondition.IN,
+                        value=countries,
+                        raw_value=_clean_span(
+                            eligibility_text or full_text, m.start(), m.end()
+                        ),
+                        description=f"Eligible nationalities: {', '.join(countries[:5])}",
                         confidence=ConfidenceLevel.HIGH,
                     )
                 )
@@ -258,8 +287,8 @@ class RequirementExtractor:
 
     def _parse_country_list(self, raw: str) -> list[str]:
         """Splits a country list string and normalizes each country name."""
-        # Split on commas, semicolons, 'and', bullets
-        parts = re.split(r"[,;\u060c]|\band\b|\u2022", raw)
+        # Split on commas, semicolons, 'and', bullets, 'و'
+        parts = re.split(r"[,;\u060c]|\band\b|\u2022|\s+و\s+", raw)
         countries: list[str] = []
         for part in parts:
             clean = part.strip().rstrip(".").strip()
@@ -268,9 +297,11 @@ class RequirementExtractor:
             # Normalize via country mappings
             lower = clean.lower()
             normalized = COUNTRY_MAPPINGS.get(lower)
-            if normalized:
+            if not normalized and self._norm:
+                normalized = self._norm.normalize_country(clean)
+            if normalized and normalized not in countries:
                 countries.append(normalized)
-            elif len(clean) > 2:  # Passthrough for unknown countries
+            elif len(clean) > 2 and clean.title() not in countries and clean.isascii():
                 countries.append(clean.title())
         return countries[:30]  # Cap at 30 to avoid noise
 
@@ -284,30 +315,43 @@ class RequirementExtractor:
         results: list[ExtractedRequirement] = []
 
         if study_levels:
+            norm_levels = (
+                self._norm.normalize_study_levels(study_levels) if self._norm else None
+            )
+            final_levels = norm_levels if norm_levels else study_levels
             results.append(
                 ExtractedRequirement(
                     req_type=RequirementType.EDUCATION,
                     status=RequirementStatus.REQUIRED,
                     condition=RequirementCondition.IN,
-                    value=study_levels,
+                    value=final_levels,
                     raw_value=f"study_levels: {study_levels}",
-                    description=f"Required degree level(s): {', '.join(study_levels)}",
+                    description=f"Required degree level(s): {', '.join(final_levels)}",
                     confidence=ConfidenceLevel.HIGH,
                 )
             )
             return results
 
-        # Fallback: detect from text
+        # Fallback: detect from text (English and Arabic)
         level_patterns = [
             (
                 "Bachelor",
-                re.compile(r"(?i)\b(?:bachelor'?s?|undergraduate|بكالوريوس)\b"),
+                re.compile(
+                    r"(?i)\b(?:bachelor'?s?|undergraduate|بكالوريوس|درجة\s+البكالوريوس|شهادة\s+البكالوريوس)\b"
+                ),
             ),
             (
                 "Master",
-                re.compile(r"(?i)\b(?:master'?s?|postgraduate|ماجستير|msc|mba)\b"),
+                re.compile(
+                    r"(?i)\b(?:master'?s?|postgraduate|ماجستير|درجة\s+الماجستير|شهادة\s+الماجستير|msc|mba)\b"
+                ),
             ),
-            ("PhD", re.compile(r"(?i)\b(?:ph\.?d\.?|doctorate|doctoral|دكتوراه)\b")),
+            (
+                "PhD",
+                re.compile(
+                    r"(?i)\b(?:ph\.?d\.?|doctorate|doctoral|دكتوراه|دكتوراة|درجة\s+الدكتوراه|شهادة\s+الدكتوراه)\b"
+                ),
+            ),
         ]
         found = []
         for level_name, pattern in level_patterns:
@@ -336,9 +380,9 @@ class RequirementExtractor:
     ) -> list[ExtractedRequirement]:
         """Extracts academic disciplines while strictly rejecting geographic and metadata noise."""
 
-        # Open-to-all field pattern
+        # Open-to-all field pattern (English and Arabic)
         open_field_pattern = re.compile(
-            r"(?i)\b(?:open\s+to\s+all\s+(?:academic\s+)?(?:fields|disciplines|subjects|majors)|any\s+(?:eligible\s+)?(?:academic\s+)?(?:field|discipline|subject|course)|open\s+to\s+any\s+subject|all\s+academic\s+fields)",
+            r"(?i)\b(?:open\s+to\s+all\s+(?:academic\s+)?(?:fields|disciplines|subjects|majors)|any\s+(?:eligible\s+)?(?:academic\s+)?(?:field|discipline|subject|course)|open\s+to\s+any\s+subject|all\s+academic\s+fields)\b|(?:متاحة?\s+لجميع\s+التخصصات|مفتوحة?\s+لجميع\s+التخصصات|جميع\s+المجالات\s+الأكاديمية|جميع\s+التخصصات\s+الأكاديمية|كافة\s+التخصصات)",
         )
         if open_field_pattern.search(full_text):
             return [
@@ -356,11 +400,28 @@ class RequirementExtractor:
         if not fields_of_study:
             return []
 
-        valid_fields = [
-            f
-            for f in fields_of_study
-            if f and not any(tok in f.lower() for tok in NON_ACADEMIC_FIELD_TOKENS)
-        ]
+        valid_fields: list[str] = []
+        for f in fields_of_study:
+            if not f or not str(f).strip():
+                continue
+            clean_f = str(f).strip()
+            clean_lower = clean_f.lower()
+            # 1. Reject non-academic metadata tokens
+            if any(tok in clean_lower for tok in NON_ACADEMIC_FIELD_TOKENS):
+                continue
+            # 2. Reject geographic country names using existing country mapping infrastructure
+            clean_no_paren = re.sub(r"\s*\([^)]*\)", "", clean_lower).strip()
+            if (
+                clean_lower in COUNTRY_MAPPINGS
+                or clean_no_paren in COUNTRY_MAPPINGS
+                or any(
+                    clean_lower == c.lower() or clean_no_paren == c.lower()
+                    for c in COUNTRY_MAPPINGS.values()
+                )
+            ):
+                continue
+            valid_fields.append(clean_f)
+
         if not valid_fields:
             return []
 
@@ -385,7 +446,7 @@ class RequirementExtractor:
         results: list[ExtractedRequirement] = []
         search_text = f"{eligibility_text}\n{description}"
 
-        # GPA on 4.0 scale: e.g. 'GPA of 3.5', 'minimum GPA 3.0/4.0'
+        # GPA on 4.0 scale (English): e.g. 'GPA of 3.5', 'minimum GPA 3.0/4.0'
         gpa_pattern = re.compile(
             r"(?i)\b(?:minimum\s+)?(?:c?gpa|agpa)\s+(?:of\s+|>=|:\s*)?([2-4](?:\.\d+)?)(?:\s*(?:/|\s+out\s+of\s+)(4(?:\.0)?))?\b"
         )
@@ -412,7 +473,7 @@ class RequirementExtractor:
             )
             return results
 
-        # Percentage GPA: e.g. '75% or higher'
+        # Percentage GPA (English): e.g. '75% or higher'
         pct_pattern = re.compile(
             r"(?i)\b(?:minimum\s+)?(?:academic\s+)?(?:average|grade)?\s*(?:of)?\s*([6-9]\d)%\s*(?:or\s+higher)?\b"
         )
@@ -438,6 +499,59 @@ class RequirementExtractor:
             )
             return results
 
+        # Arabic Percentage GPA: e.g. 'معدل لا يقل عن 80%', 'معدل تراكمي 80%', 'يشترط معدل 80 بالمئة'
+        ar_pct_pattern = re.compile(
+            r"(?:(?:معدل\s+(?:تراكمي|أكاديمي|دراسي)?\s*|المعدل\s+(?:التراكمي|الأكاديمي|الدراسي)[:\s]*|يشترط\s+معدل\s+)(?:لا\s+يقل\s+عن\s+|:\s*)?([6-9]\d)(?:\s*(?:%|٪|بالمئة|بالمائة)))"
+        )
+        m = ar_pct_pattern.search(search_text)
+        if m:
+            pct = float(m.group(1))
+            gpa_4 = (pct / 100.0) * 4.0
+            results.append(
+                ExtractedRequirement(
+                    req_type=RequirementType.GPA,
+                    status=RequirementStatus.REQUIRED,
+                    condition=RequirementCondition.GTE,
+                    value={
+                        "min_gpa_normalized_4": round(gpa_4, 2),
+                        "minimum": pct,
+                        "scale": 100.0,
+                        "type": "PERCENTAGE",
+                    },
+                    raw_value=_clean_span(search_text, m.start(), m.end()),
+                    description=f"Minimum academic average {pct}%",
+                    confidence=ConfidenceLevel.HIGH,
+                )
+            )
+            return results
+
+        # Arabic Absolute GPA: e.g. 'معدل تراكمي لا يقل عن 3.0', 'يشترط معدل 3.0 من 4'
+        ar_gpa_pattern = re.compile(
+            r"(?:(?:معدل\s+(?:تراكمي|أكاديمي|دراسي)?\s*|المعدل\s+(?:التراكمي|الأكاديمي|الدراسي)[:\s]*|يشترط\s+معدل\s+)(?:لا\s+يقل\s+عن\s+|:\s*|من\s+)?([2-4](?:[.,]\d+)?)(?:\s*(?:من|/|\s+من\s+أصل\s+)(4(?:[.,]0)?))?)"
+        )
+        m = ar_gpa_pattern.search(search_text)
+        if m:
+            raw_val = float(m.group(1).replace(",", "."))
+            scale = float(m.group(2).replace(",", ".")) if m.group(2) else 4.0
+            gpa_4 = raw_val if scale == 4.0 else (raw_val / scale) * 4.0
+            results.append(
+                ExtractedRequirement(
+                    req_type=RequirementType.GPA,
+                    status=RequirementStatus.REQUIRED,
+                    condition=RequirementCondition.GTE,
+                    value={
+                        "min_gpa_normalized_4": round(gpa_4, 2),
+                        "minimum": raw_val,
+                        "scale": scale,
+                        "type": "NUMERIC",
+                    },
+                    raw_value=_clean_span(search_text, m.start(), m.end()),
+                    description=f"Minimum GPA {raw_val}/{scale}",
+                    confidence=ConfidenceLevel.HIGH,
+                )
+            )
+            return results
+
         # Honors / qualitative: 'First Class Honours', 'Upper Second'
         honors_pattern = re.compile(
             r"(?i)\b(first\s+class\s+honours?|upper\s+second[- ]class(?:\s+2:1)?|top\s+10%|grade\s+a)\b"
@@ -457,21 +571,32 @@ class RequirementExtractor:
             )
             return results
 
-        # Qualitative: 'excellent academic record'
+        # Qualitative (English & Arabic): 'excellent academic record', 'سجل أكاديمي ممتاز'
         qualitative_pattern = re.compile(
-            r"(?i)\b(excellent\s+academic\s+record|high\s+academic\s+standing|outstanding\s+academic\s+achievement)\b"
+            r"(?i)\b(excellent\s+academic\s+record|high\s+academic\s+standing|outstanding\s+academic\s+achievement)\b|(?:سجل\s+(?:أكاديمي|دراسي)\s+(?:ممتاز|متميز|جيد(?:\s+جداً)?)|أداء\s+أكاديمي\s+(?:متميز|ممتاز|جيد)|تفوق\s+أكاديمي|معدل\s+(?:تراكمي|أكاديمي|دراسي)\s+(?:ممتاز|مرتفع|جيد(?:\s+جداً)?)|تقدير\s+(?:ممتاز|جيد\s+جداً))"
         )
         m = qualitative_pattern.search(search_text)
         if m:
+            snippet = _clean_span(search_text, m.start(), m.end())
+            is_req = bool(
+                re.search(
+                    r"(?:يجب|يشترط|مطلوب|يتعين|على\s+المتقدم|اشتراط|ضرورة)", snippet
+                )
+            )
+            status = (
+                RequirementStatus.REQUIRED if is_req else RequirementStatus.PREFERRED
+            )
             results.append(
                 ExtractedRequirement(
                     req_type=RequirementType.GPA,
-                    status=RequirementStatus.PREFERRED,
+                    status=status,
                     condition=None,
-                    value={"text": m.group(1).strip(), "type": "QUALITATIVE"},
-                    raw_value=_clean_span(search_text, m.start(), m.end()),
-                    description=f"Qualitative academic requirement: {m.group(1).strip()}",
-                    confidence=ConfidenceLevel.LOW,
+                    value={"text": m.group(0).strip(), "type": "QUALITATIVE"},
+                    raw_value=snippet,
+                    description=f"Qualitative academic requirement: {m.group(0).strip()}",
+                    confidence=(
+                        ConfidenceLevel.MEDIUM if is_req else ConfidenceLevel.LOW
+                    ),
                 )
             )
             return results
@@ -485,9 +610,9 @@ class RequirementExtractor:
         """Extracts language tests and compound OR conditions (e.g. IELTS 6.5 OR TOEFL 80)."""
         results: list[ExtractedRequirement] = []
 
-        # Explicit no certificate required
+        # Explicit no certificate required (English & Arabic)
         no_cert_pattern = re.compile(
-            r"(?i)\b(?:no\s+(?:ielts(?:\s+certificate)?|toefl(?:\s+certificate)?|language\s+certificate)\s+(?:is\s+)?required|ielts\s+(?:is\s+)?(?:not\s+)?waived)\b"
+            r"(?i)\b(?:no\s+(?:ielts(?:\s+certificate)?|toefl(?:\s+certificate)?|language\s+certificate)\s+(?:is\s+)?required|ielts\s+(?:is\s+)?(?:not\s+)?waived)\b|(?:لا\s+(?:يشترط|تتطلب)\s+(?:شهادة\s+)?(?:لغة|آيلتس|توفل)|بدون\s+شهادة\s+لغة|إعفاء\s+من\s+اختبار\s+اللغة)"
         )
         if no_cert_pattern.search(full_text):
             return [
@@ -570,29 +695,49 @@ class RequirementExtractor:
                 )
             ]
 
-        # General English proficiency (no specific test score)
+        # General English proficiency (English & Arabic)
         general_lang_pattern = re.compile(
-            r"(?i)\b(?:proof\s+of\s+|demonstrate\s+)?(?:english\s+(?:or\s+[a-z]+\s+)?proficiency|english\s+language\s+proficiency|proficiency\s+in\s+english|language\s+(?:proficiency\s+)?certificates?|language\s+requirements?)\b"
+            r"(?i)\b(?:proof\s+of\s+|demonstrate\s+)?(?:english\s+(?:or\s+[a-z]+\s+)?proficiency|english\s+language\s+proficiency|proficiency\s+in\s+english|language\s+(?:proficiency\s+)?certificates?|language\s+requirements?)\b|(?:إجادة\s+اللغة\s+(?:الإنجليزيّة|الإلكترونية|الإنكليزية|الإنجليزية)|إتقان\s+اللغة\s+(?:الإنجليزية|الإنكليزية)|شهادة\s+إتقان\s+اللغة|إثبات\s+إتقان\s+اللغة|إثبات\s+كفاءة\s+اللغة|شهادة\s+(?:IELTS|TOEFL|آيلتس|توفل)|(?:IELTS|TOEFL|آيلتس|توفل)\s+(?:أو\s+(?:TOEFL|IELTS|توفل|آيلتس))|مستوى\s+(?:جيد|متقدم)\s+في\s+اللغة\s+الإنجليزية)"
         )
         lang_match = general_lang_pattern.search(full_text)
         if lang_match:
-            results.append(
-                ExtractedRequirement(
-                    req_type=RequirementType.LANGUAGE,
-                    status=RequirementStatus.REQUIRED,
-                    condition=None,
-                    value={
-                        "tests": [],
-                        "min_proficiency": "proficient",
-                        "category": "English",
-                    },
-                    raw_value=_clean_span(
-                        full_text, lang_match.start(), lang_match.end()
-                    ),
-                    description="English language proficiency required (no specific test score)",
-                    confidence=ConfidenceLevel.MEDIUM,
-                )
+            snippet = _clean_span(full_text, lang_match.start(), lang_match.end(), 120)
+            # Check for general informational mentions to prevent false positives
+            info_mention = re.search(
+                r"(?:تساعد\s+الجامعة|تستقطب\s+الطلاب|يتعلم\s+الطلاب|تتيح\s+الفرصة\s+التعلم|توفر\s+دورات|تتيح\s+تعلّم|helps?\s+students\s+learn)",
+                snippet,
             )
+            if not info_mention:
+                is_preferred = bool(
+                    re.search(
+                        r"(?i)\b(?:preferred|advantage|desirable|optionally)\b|(?:يفضل|أفضلية|يستحسن|من\s+الأفضل|تمنح\s+أولوية)",
+                        snippet,
+                    )
+                )
+                status = (
+                    RequirementStatus.PREFERRED
+                    if is_preferred
+                    else RequirementStatus.REQUIRED
+                )
+                results.append(
+                    ExtractedRequirement(
+                        req_type=RequirementType.LANGUAGE,
+                        status=status,
+                        condition=None,
+                        value={
+                            "tests": [],
+                            "min_proficiency": "proficient",
+                            "category": "English",
+                        },
+                        raw_value=snippet,
+                        description="English language proficiency required (no specific test score)",
+                        confidence=(
+                            ConfidenceLevel.MEDIUM
+                            if status == RequirementStatus.REQUIRED
+                            else ConfidenceLevel.LOW
+                        ),
+                    )
+                )
 
         return results
 
@@ -604,9 +749,9 @@ class RequirementExtractor:
         """Extracts work and research experience without inferring from titles or degree levels."""
         results: list[ExtractedRequirement] = []
 
-        # No experience required
+        # No experience required (English & Arabic)
         no_exp_pattern = re.compile(
-            r"(?i)\b(?:no\s+(?:prior|previous)?\s*(?:work|professional|employment)?\s*experience\s+(?:is\s+)?required)\b"
+            r"(?i)\b(?:no\s+(?:prior|previous)?\s*(?:work|professional|employment)?\s*experience\s+(?:is\s+)?required)\b|(?:لا\s+(?:يشترط|تتطلب|يلزم)\s+(?:وجود\s+)?خبرة\s*(?:سابقة|عملية)?|بدون\s+خبرة\s+سابقة)"
         )
         if no_exp_pattern.search(full_text):
             return [
@@ -621,38 +766,42 @@ class RequirementExtractor:
                 )
             ]
 
-        # Specific experience area patterns (REQUIRED or PREFERRED)
+        # Specific experience area patterns (REQUIRED or PREFERRED - English & Arabic)
         area_patterns = [
             (
                 "research",
                 re.compile(
-                    r"(?i)\b(?:research\s+experience|research\s+background|research\s+assistant)\b"
+                    r"(?i)\b(?:research\s+experience|research\s+background|research\s+assistant)\b|(?:خبرة\s+بحثية|خبرة\s+في\s+البحث\s+العلمي|مجال\s+البحث\s+العلمي|أبحاث\s+سابقة|مساعد\s+بحث|مقترح\s+بحثي)"
                 ),
             ),
             (
                 "volunteering",
                 re.compile(
-                    r"(?i)\b(?:volunteer(?:ing)?\s+experience|community\s+service)\b"
+                    r"(?i)\b(?:volunteer(?:ing)?\s+experience|community\s+service)\b|(?:خبرة\s+تطوعية|عمل\s+تطوعي|أنشطة\s+مجتمعية|خدمة\s+المجتمع|مبادرات\s+مجتمعية|أنشطة\s+تطوعية)"
                 ),
             ),
             (
                 "teaching",
                 re.compile(
-                    r"(?i)\b(?:teaching\s+experience|tutoring|academic\s+instruction)\b"
+                    r"(?i)\b(?:teaching\s+experience|tutoring|academic\s+instruction)\b|(?:خبرة\s+تدريسية|خبرة\s+في\s+التدريس|مساعد\s+تدريس|تدريس\s+أكاديمي)"
                 ),
             ),
             (
                 "clinical",
-                re.compile(r"(?i)\b(?:clinical\s+experience|medical\s+practice)\b"),
+                re.compile(
+                    r"(?i)\b(?:clinical\s+experience|medical\s+practice)\b|(?:خبرة\s+سريرية|خبرة\s+طبية|ممارسة\s+طبية)"
+                ),
             ),
             (
                 "leadership",
-                re.compile(r"(?i)\b(?:leadership\s+experience|student\s+leadership)\b"),
+                re.compile(
+                    r"(?i)\b(?:leadership\s+experience|student\s+leadership|leadership\s+skills)\b|(?:خبرة\s+قيادية|مهارات\s+قيادية|قيادة\s+طلابية|أنشطة\s+قيادية)"
+                ),
             ),
             (
                 "work",
                 re.compile(
-                    r"(?i)\b(?:work|professional|employment|industry)\s+experience\b"
+                    r"(?i)\b(?:work|professional|employment|industry)\s+experience\b|(?:خبرة\s+عملية|خبرة\s+مهنية|خبرة\s+سابقة|خبرة\s+في\s+(?:مجال|البرمجة|التطوير|العمل)|سجل\s+مهني|خبرة\s+في\s+العمل)"
                 ),
             ),
         ]
@@ -661,9 +810,17 @@ class RequirementExtractor:
             m = pattern.search(full_text)
             if m:
                 snippet = _clean_span(full_text, m.start(), m.end(), 120)
+                # Check for informational mentions to prevent false positives
+                info_mention = re.search(
+                    r"(?:يستفيد\s+الطلاب\s+من|تتيح\s+الفرصة\s+اكتساب|اكتساب\s+خبرة|تستقطب\s+الطلاب|students\s+gain\s+experience)",
+                    snippet,
+                )
+                if info_mention:
+                    continue
+
                 is_preferred = bool(
                     re.search(
-                        r"(?i)\b(?:preferred|advantage|desirable|plus|optionally)\b",
+                        r"(?i)\b(?:preferred|advantage|desirable|plus|optionally)\b|(?:يفضل|أفضلية|يستحسن|من\s+الأفضل|تمنح\s+أولوية)",
                         snippet,
                     )
                 )

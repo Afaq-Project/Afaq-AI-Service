@@ -17,13 +17,18 @@ from src.modules.core.database.repositories.match_score_repository import (
 from src.modules.core.database.repositories.opportunity_repository import (
     OpportunityRepository,
 )
+from src.modules.infrastructure.llm.providers import (
+    get_chat_model,
+    get_structured_client,
+)
 from src.modules.infrastructure.webhook.webhook_client import WebhookClient
+from src.modules.matching.services.matching_service import MatchingService
+from src.modules.matching.services.user_profile_reader import UserProfileReader
 
 if TYPE_CHECKING:
     from src.modules.ai.chat_agent import WardhookChatAgentFactory
     from src.modules.ai.chat_service import ChatService
     from src.modules.ai.essay_review_service import EssayReviewService
-    from src.modules.matching.services.matching_service import MatchingService
 
 
 def get_api_key_service() -> ApiKeyService:
@@ -66,7 +71,6 @@ def get_scraper_service() -> ScraperServiceProtocol:
 def get_chat_agent_factory() -> "WardhookChatAgentFactory":
     from src.modules.ai.chat_agent import WardhookChatAgentFactory
     from src.modules.ai.guardrails import build_chat_guardrails
-    from src.modules.infrastructure.llm.providers import get_chat_model
 
     return WardhookChatAgentFactory(get_chat_model(), build_chat_guardrails())
 
@@ -85,12 +89,16 @@ def get_chat_service() -> "ChatService":
 
 def get_essay_review_service() -> "EssayReviewService":
     from src.modules.ai.essay_review_service import EssayReviewService
-    from src.modules.infrastructure.llm.providers import get_structured_client
 
     return EssayReviewService(
         llm=get_structured_client(),
         opportunities=OpportunityRepository(get_client()),
     )
+
+
+def get_user_profile_reader() -> UserProfileReader:
+    """Returns UserProfileReader configured with PROFILE_API_DATABASE_URL."""
+    return UserProfileReader()
 
 
 def get_match_score_repository() -> MatchScoreRepository:
@@ -108,13 +116,22 @@ def get_matching_webhook_client() -> WebhookClient:
 
 def get_matching_service(
     webhook_client: WebhookClient = Depends(get_matching_webhook_client),
-) -> "MatchingService":
-    from src.modules.matching.services import MatchingService, UserProfileReader
-
+    profile_reader: UserProfileReader = Depends(get_user_profile_reader),
+) -> MatchingService:
     db = get_client()
+    actual_reader = (
+        profile_reader
+        if isinstance(profile_reader, UserProfileReader)
+        else get_user_profile_reader()
+    )
+    actual_webhook = (
+        webhook_client
+        if isinstance(webhook_client, WebhookClient)
+        else get_matching_webhook_client()
+    )
     return MatchingService(
-        profile_reader=UserProfileReader(db=db),
+        profile_reader=actual_reader,
         opportunity_repo=OpportunityRepository(db),
         match_score_repo=MatchScoreRepository(db),
-        webhook_client=webhook_client,
+        webhook_client=actual_webhook,
     )
