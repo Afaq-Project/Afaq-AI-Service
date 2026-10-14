@@ -1,5 +1,6 @@
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -20,8 +21,21 @@ class ScrapeCompletePayload(BaseModel):
     completed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class MatchingCompletePayload(BaseModel):
+    """Payload for notifying the main backend when a matching operation completes."""
+
+    operation_type: str  # "user_matching" | "opportunity_matching" | "full_rematch"
+    operation_id: str
+    user_id: str | None = None
+    opportunity_id: str | None = None
+    status: str = "success"
+    matches_count: int = Field(default=0, ge=0)
+    completed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class WebhookClient:
-    """يرسل إشعارات إلى الخدمة الرئيسية عند اكتمال الجلب."""
+    """يرسل إشعارات إلى الخدمة الرئيسية عند اكتمال العمليات."""
 
     def __init__(
         self,
@@ -49,10 +63,7 @@ class WebhookClient:
         return headers
 
     async def notify_scrape_complete(self, payload: ScrapeCompletePayload) -> bool:
-        """يرسل الإشعار. يرجع True عند النجاح و False عند الفشل النهائي.
-
-        لا يرفع استثناءً: فشل الإشعار يجب ألا يُفشل عملية جلب ناجحة.
-        """
+        """يرسل إشعار اكتمال الجلب. يرجع True عند النجاح و False عند الفشل النهائي."""
         if not self._url:
             logger.warning("Webhook URL not configured; skipping notification")
             return False
@@ -71,5 +82,36 @@ class WebhookClient:
             "Webhook delivered for batch %s (%d opportunities)",
             payload.batch_id,
             payload.total_opportunities,
+        )
+        return True
+
+    async def notify_matching_complete(self, payload: MatchingCompletePayload) -> bool:
+        """يرسل إشعار اكتمال المطابقة للخدمة الرئيسية.
+
+        يرجع True عند النجاح و False عند الفشل النهائي.
+        لا يرفع استثناءً: فشل الإشعار لا يجب أن يُفشل عملية المطابقة الناجحة.
+        """
+        if not self._url:
+            logger.warning("Matching Webhook URL not configured; skipping notification")
+            return False
+
+        try:
+            await self._http.post(
+                self._url,
+                content=payload.model_dump_json(),
+                headers=self._headers(),
+            )
+        except HttpClientError:
+            logger.exception(
+                "Matching webhook delivery failed for operation %s",
+                payload.operation_id,
+            )
+            return False
+
+        logger.info(
+            "Matching webhook delivered for operation %s (%s, %d matches)",
+            payload.operation_id,
+            payload.operation_type,
+            payload.matches_count,
         )
         return True

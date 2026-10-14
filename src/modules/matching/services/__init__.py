@@ -13,6 +13,8 @@ from src.modules.matching.services.match_calculator import MatchCalculator
 from src.modules.matching.services.matching_service import (
     MatchingService,
     OpportunityNotFoundError,
+    RematchAlreadyRunningError,
+    UserNotFoundError,
     UserProfileNotFoundError,
 )
 from src.modules.matching.services.opportunity_requirements_matcher import (
@@ -33,9 +35,11 @@ __all__ = [
     "OpportunityNotFoundError",
     "OpportunityRequirementsMatchResult",
     "OpportunityRequirementsMatcher",
+    "RematchAlreadyRunningError",
     "RequirementExtractor",
     "RequirementMatchDecision",
     "SingleRequirementEvaluation",
+    "UserNotFoundError",
     "UserProfileNotFoundError",
     "UserProfileReader",
     "filter_opportunities_by_lifecycle",

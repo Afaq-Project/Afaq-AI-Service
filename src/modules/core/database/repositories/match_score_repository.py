@@ -86,6 +86,79 @@ class MatchScoreRepository:
             data=payload["data"],  # type: ignore[arg-type]
         )
 
+    async def upsert_score(
+        self,
+        user_id: str,
+        opportunity_id: str,
+        score_pct: int,
+        score_breakdown: dict[str, Any] | None = None,
+        calculation_version: int = 1,
+    ) -> Any:
+        """Upserts a single MatchScore record respecting @@unique([user_id, opportunity_id])."""
+        breakdown_json = Json(score_breakdown or {})
+        now = datetime.now(UTC)
+
+        return await self._db.matchscore.upsert(
+            where={
+                "user_id_opportunity_id": {
+                    "user_id": str(user_id),
+                    "opportunity_id": str(opportunity_id),
+                }
+            },
+            data={
+                "create": {
+                    "user_id": str(user_id),
+                    "opportunity_id": str(opportunity_id),
+                    "score_pct": score_pct,
+                    "score_breakdown": breakdown_json,
+                    "calculation_version": calculation_version,
+                    "calculated_at": now,
+                },
+                "update": {
+                    "score_pct": score_pct,
+                    "score_breakdown": breakdown_json,
+                    "calculation_version": calculation_version,
+                    "calculated_at": now,
+                },
+            },
+        )
+
+    async def upsert_many_scores(
+        self,
+        scores: list[dict[str, Any]],
+    ) -> int:
+        """Upserts a list of match scores into the database.
+
+        Each dict in scores must contain:
+          - user_id: str
+          - opportunity_id: str
+          - score_pct: int
+          - score_breakdown: dict[str, Any] (optional)
+          - calculation_version: int (optional, default 1)
+
+        Returns:
+          Number of records processed.
+        """
+        count = 0
+        for item in scores:
+            user_id = item["user_id"]
+            opportunity_id = item["opportunity_id"]
+            score_pct = item["score_pct"]
+            score_breakdown = item.get("score_breakdown") or {}
+            calc_version = item.get("calculation_version", 1)
+
+            await self.upsert_score(
+                user_id=user_id,
+                opportunity_id=opportunity_id,
+                score_pct=score_pct,
+                score_breakdown=score_breakdown,
+                calculation_version=calc_version,
+            )
+            count += 1
+
+        logger.info("Successfully upserted %d match score records", count)
+        return count
+
     async def find_by_user_and_opportunity(
         self, user_id: UUID | str, opportunity_id: UUID | str
     ) -> Any | None:
@@ -103,6 +176,16 @@ class MatchScoreRepository:
         """Finds match scores for a given user ordered by score descending."""
         return await self._db.matchscore.find_many(
             where={"user_id": str(user_id)},
+            order={"score_pct": "desc"},
+            take=limit,
+        )
+
+    async def find_by_opportunity_id(
+        self, opportunity_id: UUID | str, limit: int = 100
+    ) -> list[Any]:
+        """Finds match scores for a given opportunity ordered by score descending."""
+        return await self._db.matchscore.find_many(
+            where={"opportunity_id": str(opportunity_id)},
             order={"score_pct": "desc"},
             take=limit,
         )

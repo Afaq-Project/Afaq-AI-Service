@@ -21,6 +21,8 @@ class Settings(BaseSettings):
 
     main_service_webhook_url: str = ""
     main_service_webhook_secret: str = ""
+    matching_webhook_url: str = ""
+    matching_webhook_secret: str = ""
     webhook_timeout: float = 15.0
 
     anthropic_api_key: str = ""
