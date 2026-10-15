@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -8,7 +9,7 @@ from src.modules.matching.models import UserProfileDTO
 
 logger = logging.getLogger(__name__)
 
-SELECT_USER_PROFILE_QUERY = """
+_BASE_USER_PROFILE_SELECT = """
 SELECT
     u.id AS user_id,
     u.email::text AS email,
@@ -80,36 +81,14 @@ LEFT JOIN public.countries nat ON nat.id = p.nationality_id
 LEFT JOIN public.education_levels el ON el.id = p.education_level_id
 LEFT JOIN public.countries c_res ON c_res.id = p.country_of_residence_id
 LEFT JOIN public.cities city ON city.id = p.current_city_id
+"""
+
+SELECT_USER_PROFILE_QUERY = f"""{_BASE_USER_PROFILE_SELECT}
 WHERE u.id = $1::uuid;
 """
 
-SELECT_ALL_USER_PROFILES_QUERY = """
-SELECT
-    user_id,
-    email,
-    first_name,
-    last_name,
-    full_name,
-    date_of_birth,
-    nationality,
-    education_level,
-    current_country,
-    current_city,
-    phone,
-    experience_level,
-    has_financial_need,
-    career_goals,
-    profile_photo_url,
-    completion_pct,
-    is_matchable,
-    preferences,
-    is_draft,
-    skills,
-    languages,
-    educations,
-    fields_of_study
-FROM public.v_user_full_profile
-ORDER BY user_id
+SELECT_ALL_USER_PROFILES_QUERY = f"""{_BASE_USER_PROFILE_SELECT}
+ORDER BY u.id
 LIMIT $1 OFFSET $2;
 """
 
@@ -144,7 +123,7 @@ class UserProfileReader:
             self._db = Prisma(datasource={"url": self._database_url})
 
         if not self._db.is_connected():
-            await self._db.connect()
+            await self._db.connect(timeout=timedelta(seconds=20))
         return self._db
 
     async def close(self) -> None:
@@ -191,7 +170,7 @@ class UserProfileReader:
     async def get_all_profiles(
         self, limit: int = 100, offset: int = 0
     ) -> list[UserProfileDTO]:
-        """Retrieves a paginated list of user profiles from public.v_user_full_profile.
+        """Retrieves a paginated list of user profiles from user tables.
 
         Args:
             limit: Maximum number of profiles to return.

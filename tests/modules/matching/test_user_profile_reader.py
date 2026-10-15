@@ -335,6 +335,51 @@ class TestUserProfileReader:
         ):
             await reader.get_client()
 
+    async def test_get_all_profiles_success(self, mock_prisma_client):
+        uid = uuid4()
+        mock_row = {
+            "user_id": str(uid),
+            "email": "student@example.com",
+            "first_name": "Ahmad",
+            "last_name": "Ali",
+            "full_name": "Ahmad Ali",
+            "date_of_birth": date(2000, 5, 20),
+            "nationality": "Palestine",
+            "education_level": "Bachelor",
+            "current_country": "Palestine",
+            "current_city": "Ramallah",
+            "phone": "+970590000000",
+            "experience_level": None,
+            "has_financial_need": None,
+            "career_goals": "Master degree",
+            "profile_photo_url": None,
+            "completion_pct": 80,
+            "preferences": {},
+            "is_draft": False,
+            "skills": [],
+            "languages": [],
+            "educations": [],
+            "fields_of_study": [],
+        }
+        mock_prisma_client.query_raw.return_value = [mock_row]
+
+        reader = UserProfileReader(db=mock_prisma_client)
+        profiles = await reader.get_all_profiles(limit=50, offset=10)
+
+        assert len(profiles) == 1
+        assert str(profiles[0].user_id) == str(uid)
+        assert profiles[0].first_name == "Ahmad"
+        assert profiles[0].nationality == "Palestine"
+
+        call_args = mock_prisma_client.query_raw.call_args[0]
+        query_sql = call_args[0]
+        assert "SELECT" in query_sql
+        assert "FROM public.users u" in query_sql
+        assert "ORDER BY u.id" in query_sql
+        assert "LIMIT $1 OFFSET $2;" in query_sql
+        assert call_args[1] == 50
+        assert call_args[2] == 10
+
     async def test_close_calls_disconnect_on_owned_client(self, mock_prisma_client):
         reader = UserProfileReader(db=None)
         reader._db = mock_prisma_client
