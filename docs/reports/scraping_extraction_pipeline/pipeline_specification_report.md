@@ -1,242 +1,346 @@
-# Crawl4AI Adaptive Multi-Level Scraping & Raw Extraction Pipeline
+# Autonomous Crawl4AI Multi-Level Scraping & Raw Extraction Pipeline
 
-## 1. Executive Summary & Architectural Decoupling
+## 1. Executive Summary & Architectural Decisions
 
-The Afaq opportunity ingestion architecture strictly decouples **Data Extraction** (Producer) from **Data Cleaning & Normalization** (Consumer).
+This specification defines the redesigned, fully autonomous **Data Extraction Engine** (Producer) for Afaq-AI-Service. It replaces all hardcoded legacy adapters with a unified, browser-driven crawling engine powered by `crawl4ai` and self-healing multi-template libraries.
 
-* **The Extraction Module (Scope of this specification):**
-  Responsible for discovering scholarship sources, executing modern browser-driven web crawls via `crawl4ai`, running deterministic multi-level extraction templates, autonomously repairing broken templates via AI, verifying link legitimacy, downloading attached documents (PDFs), and storing structured, uncleaned raw records in the database with `status = "pending"`.
-* **The Cleaning & Normalization Module (Downstream Phase):**
-  Asynchronously consumes pending raw records, maps synonyms to canonical backend taxonomies (`Countries`, `EducationLevel`, `Majors`, `Institutions`), translates content between Arabic and English, and populates the clean bilingual database tables.
-
-```
-[ External Web ]
-       │
-       ▼ (Crawl4AI: Headless Chromium + Stealth)
-[ Level 1: Listing Crawl ] ──▶ Discovers Detail URLs ──▶ Stored in `raw_listings`
-       │
-       ▼ (Crawl4AI: Multi-page execution)
-[ Level 2: Detail Crawl ]  ──▶ Extracts Full Scholarship ──▶ Stored in `raw_grant_details`
-       │
-       ├─▶ Link Legitimacy & Anti-Fraud Verification
-       ├─▶ Document / PDF Stream Downloader
-       └─▶ Language Detection (AR vs. EN)
-       │
-       ▼
-[ Storage in Raw Tables with status = "pending" ]
-       │
-       ▼ (Future Phase)
-[ Data Cleaning, Normalization & Translation Pipeline ]
-```
+### Key Architectural Decisions:
+1. **Zero-Configuration Source Onboarding:**
+   Administrators only provide the entry-point URL in the `sources` table. An AI discovery pass autonomously inspects the website, identifies its name and metadata, detects supported languages, configures pagination, and populates a dedicated `source_configs` table.
+2. **Strict Separation of Concerns:**
+   * `sources`: Minimal, administrative registry of target URLs.
+   * `source_configs`: Highly detailed, AI-discovered technical parameters (pagination rules, timeouts, selectors, health metrics).
+   * `scraping_templates`: Dynamic template library retaining historical and recurring page layouts per source.
+3. **Multi-Template Library & Layout Rotation:**
+   Platforms often cycle through 2 to 4 recurring layouts (e.g., standard vs. sponsored articles, list vs. grid views). Rather than discarding old templates or invoking LLMs repeatedly, the engine maintains all historical templates in a pool, attempting fast deterministic matches before calling AI.
+4. **Complete Phase-Out of Legacy Adapters:**
+   All legacy hardcoded Python scrapers (`Almin7Adapter`, `GrabScholarshipAdapter`, `Scholars4DevAdapter`, `WordPressApiAdapter`, and `AdapterFactory`) are completely eliminated.
+5. **Decoupled Scheduling:**
+   Crawl frequency/scheduling is removed from the scraping tables and delegated to a dedicated scheduling subsystem.
+6. **AWS S3 Document Storage:**
+   All downloadable application forms, PDFs, and guides are streamed directly into an AWS S3 bucket with SHA256 deduplication.
+7. **Pre-AI Validation & Content Relevance Gates:**
+   Access failures (Cloudflare blocks, parking domains, HTTP 403/404) are intercepted before invoking AI. During template synthesis, the prompt instructs the LLM to inspect domain relevance first; non-opportunity pages trigger explicit, pre-defined error codes to eliminate wasted LLM costs.
 
 ---
 
 ## 2. Database Schema Design (Extraction Layer)
 
-Four dedicated tables in PostgreSQL support this extraction pipeline without relying on miscellaneous JSON catch-alls for operational state.
+The data model is partitioned into six focused tables, cleanly separating administrative inputs, technical configurations, template libraries, operational telemetry, and raw two-level extractions.
 
-### 2.1. `sources` (Scraping Source Catalog)
-Reconfigured from legacy REST API assumptions to native web crawling:
+### 2.1. `sources` (Administrative URL Registry)
+Minimal, clean interface for administrators to register targets:
 * `id: UUID (PK)`
-* `name: String (Unique)` — Identifier (e.g., `almin7`, `scholars4dev`).
-* `display_name: String` — Human-readable label.
-* `base_url: String` — Root domain URL.
-* `listing_url: String` — Starting entry-point for the crawler (e.g., `https://almin7.com/scholarships/`).
-* `domain: String` — Normalized domain for template indexing (`almin7.com`).
-* `crawl_frequency: String` — Schedule (`daily`, `weekly`, `hourly`).
-* `wait_for_selector: String?` — Optional CSS selector Crawl4AI waits for before parsing.
-* `page_timeout_sec: Int` — Maximum page load timeout (default: 30s).
-* `max_pages_per_run: Int` — Maximum listing pages to traverse per batch (default: 10).
-* `level_1_template: Json` — Active JSON schema for listing catalog extraction.
-* `level_2_template: Json` — Active JSON schema for individual detail extraction.
-* `is_active: Boolean` — Admin toggle to enable/disable crawling.
-* `drift_detected: Boolean` — Flagged when template failure or yield collapse occurs.
-* `consecutive_failures: Int` — Failure counter for health alerts.
-* `last_scraped_at: DateTime?`
+* `url: String` — Target website entry URL (e.g., `https://almin7.com/scholarships/`).
+* `name: String?` — Optional label; auto-generated by AI if omitted.
+* `is_active: Boolean` — Default `true`. Admin kill-switch.
+* `created_by: String?` — Admin user identifier.
+* `created_at: DateTime`
+* `updated_at: DateTime`
 
-### 2.2. `scrape_operations` (Batch Telemetry & Reporting)
-Records high-level audit and monitoring metrics for every scrape run:
-* `id: UUID (PK)` — The `operation_id` generated at job trigger.
+### 2.2. `source_configs` (Technical Crawling & Discovery Settings)
+Populated and maintained autonomously by the engine:
+* `id: UUID (PK)`
+* `source_id: UUID (FK, Unique)` — References `sources.id` (1-to-1).
+* `domain: String` — Normalized domain for indexing (`almin7.com`).
+* `site_name: String` — AI-discovered official website name.
+* `site_description: String?` — AI-generated summary of the portal.
+* `supported_languages: String[]` — Discovered languages (e.g. `["ar"]`, `["ar", "en"]`).
+* `language_switch_type: String?` — `hreflang`, `url_prefix`, `cookie`, `none`.
+* `pagination_type: String` — `next_button`, `url_param`, `infinite_scroll`, `none`.
+* `pagination_config: Json` — Specific rules (e.g., parameter name, base selector, page limit).
+* `wait_for_selector: String?` — Specific DOM element Crawl4AI waits for before parsing.
+* `page_timeout_sec: Int` — Max navigation timeout (default: 30s).
+* `max_pages_per_run: Int` — Max listing pages to traverse per job (default: 10).
+* `drift_detected: Boolean` — Default `false`. Flagged when extraction yields collapse.
+* `consecutive_failures: Int` — Counter triggering administrative alerts.
+* `last_scraped_at: DateTime?`
+* `created_at: DateTime`
+* `updated_at: DateTime`
+
+### 2.3. `scraping_templates` (Multi-Template Pool & History)
+Stores multiple extraction schemas per source to handle layout rotation without LLM calls:
+* `id: UUID (PK)`
+* `source_id: UUID (FK)` — References `sources.id`.
+* `level: Int` — `1` (Listing Catalog) or `2` (Detail Page).
+* `layout_signature: String` — Hash or fingerprint representing the DOM structure.
+* `schema_type: String` — `CSS` or `XPATH`.
+* `template_schema: Json` — Declarative JSON schema compatible with `JsonCssExtractionStrategy`.
+* `version: Int` — Incremental template version.
+* `is_active: Boolean` — Default `true`. Included in the matching candidate pool.
+* `hit_count: Int` — Number of times this template was successfully applied.
+* `last_successful_use_at: DateTime?`
+* `created_at: DateTime`
+* `updated_at: DateTime`
+* `CONSTRAINT unique_source_level_version UNIQUE (source_id, level, version)`
+
+### 2.4. `scrape_operations` (Job Telemetry & Reports)
+Audit logs and operational reports for each scrape execution:
+* `id: UUID (PK)` — The `operation_id` generated per execution.
 * `status: String` — `running`, `completed`, `failed`, `partial`.
 * `triggered_by: String` — `cron`, `admin_api`, `manual_retry`.
 * `sources_attempted: String[]`
 * `sources_succeeded: String[]`
 * `sources_failed: String[]`
-* `total_listings_found: Int` — Total Level 1 cards discovered.
-* `total_details_extracted: Int` — Total Level 2 opportunities scraped.
-* `total_files_downloaded: Int` — Total PDF/doc attachments persisted.
-* `error_summary: Json` — Detailed breakdown of failure reasons per source.
+* `total_listings_found: Int` — Discovered Level 1 cards.
+* `total_details_extracted: Int` — Parsed Level 2 opportunities.
+* `total_files_downloaded: Int` — S3 document attachments saved.
+* `error_summary: Json` — Failure reasons and error codes per source.
 * `started_at: DateTime`
 * `completed_at: DateTime?`
 
-### 2.3. `raw_listings` (Level 1 Catalog Extraction)
-Stores discovered items from catalog pages, enabling isolated retries:
+### 2.5. `raw_listings` (Level 1 Catalog Extraction)
+Records discovered scholarship cards from catalog pages:
 * `id: UUID (PK)`
 * `operation_id: UUID (FK)` — References `scrape_operations.id`.
 * `source_id: UUID (FK)` — References `sources.id`.
 * `discovered_url: String` — Direct link to the opportunity detail page.
-* `card_title_preview: String?` — Title snippet from the card.
+* `card_title_preview: String?` — Title snippet from the catalog card.
 * `card_snippet_preview: String?`
-* `listing_page_url: String` — The paginated catalog URL where this card was found.
+* `listing_page_url: String` — Paginated URL where this card was discovered.
 * `status: String` — `pending_detail_crawl`, `details_extracted`, `failed`.
 * `scraped_at: DateTime`
 * `created_at: DateTime`
 * `CONSTRAINT unique_source_discovered_url UNIQUE (source_id, discovered_url)`
 
-### 2.4. `raw_grant_details` (Level 2 Comprehensive Extraction)
-Stores rich, uncleaned scholarship data and verification results:
+### 2.6. `raw_grant_details` (Level 2 Comprehensive Extraction)
+Stores complete, uncleaned scholarship data and verification results:
 * `id: UUID (PK)`
 * `listing_id: UUID? (FK)` — References parent `raw_listings.id`.
 * `operation_id: UUID (FK)` — References `scrape_operations.id`.
 * `source_id: UUID (FK)` — References `sources.id`.
-* `source_url: String` — Exact URL of the scraped scholarship page.
-* `template_version: Int` — Version number of the template used for extraction.
-* `raw_payload: Json` — Full structured extraction payload (title, university, funding, eligibility, deadline, etc.).
+* `template_id: UUID? (FK)` — References `scraping_templates.id` used for extraction.
+* `source_url: String` — Scholarship detail URL.
+* `raw_payload: Json` — Structured raw extraction (title, university, funding, eligibility, deadline).
 * `detected_language: String` — `ar` or `en`.
-* `link_verification_status: String` — `verified`, `suspicious`, `unreachable`, `file_download`.
+* `link_verification_status: String` — `verified`, `suspicious`, `unreachable`, `s3_download`.
 * `final_application_url: String?` — Resolved destination URL after redirects.
 * `is_legitimate_domain: Boolean?`
 * `has_attachment: Boolean` — Default `false`.
-* `attachment_metadata: Json?` — File path, type, size, SHA256 hash.
-* `status: String` — `pending` (awaiting cleaning), `processing`, `cleaned`, `failed`.
+* `attachment_s3_key: String?` — S3 object key (`s3://afaq-attachments/...`).
+* `attachment_metadata: Json?` — File size, mime-type, SHA256 checksum.
+* `status: String` — `pending` (ready for downstream cleaning), `processing`, `cleaned`, `failed`.
 * `error_message: String?`
 * `scraped_at: DateTime`
 * `created_at: DateTime`
 
 ---
 
-## 3. End-to-End Pipeline Stage Breakdown
-
-### Stage 1: Triggering & Operation Tracking
-* **Entry Point:** `POST /api/v1/scrape/run` (optionally accepts `source_ids: list[str]`).
-* **Execution Flow:**
-  1. Generates a new `operation_id = uuid4()`.
-  2. Queries active sources from database (`is_active == true`).
-  3. Inserts a new record into `scrape_operations` with `status = "running"`.
-  4. Returns `HTTP 202 Accepted` immediately with `{"status": "accepted", "operation_id": "...", "message": "..."}`.
-  5. Launches the asynchronous background scraping worker (`BackgroundTasks`).
-
-### Stage 2: Crawl4AI Core Engine Configuration
-* **Crawler Implementation:** Uses `crawl4ai.AsyncWebCrawler` inside an async context manager.
-* **Resilience & Politeness Defaults:**
-  * **Headless Browser:** Modern Chromium instance managed by Crawl4AI.
-  * **User-Agent Rotation:** Standard modern desktop browser profiles.
-  * **Rate Limiting:** Random jitter delay (2.0 to 4.5 seconds) between page fetches to protect source servers and prevent Cloudflare/IP rate-limiting.
-  * **Timeouts:** 30-second navigation timeout per page; 60-second circuit-breaker per source.
-
-### Stage 3: Multi-Level Template Extraction
-
-#### Level 1: Catalog Crawl & Discovery
-1. The crawler visits the `Source.listing_url`.
-2. Loads `Source.level_1_template` (`JsonCssExtractionStrategy`).
-3. Executes extraction on the page DOM:
-   * Extracts container cards: `base_selector`.
-   * Extracts item fields: `title`, `discovered_url`, `date_preview`.
-   * Extracts pagination link: `next_page_selector`.
-4. Saves all newly discovered URLs into `raw_listings`. If a URL already exists, it is deduplicated via `ON CONFLICT DO NOTHING`.
-
-#### Level 2: Comprehensive Detail Extraction
-1. For every pending listing discovered, the crawler navigates to `discovered_url`.
-2. Loads `Source.level_2_template` (`JsonCssExtractionStrategy`).
-3. Extracts full scholarship fields:
-   * `title`, `university_name`, `university_url`, `official_apply_url`
-   * `description`, `funding_type_raw`, `stipend_raw`, `accommodation_raw`
-   * `eligibility_criteria_raw`, `gpa_raw`, `study_levels_raw`, `fields_of_study_raw`
-   * `deadline_raw`, `country_raw`
-4. Assembles the structured JSON object and passes it to verification and storage.
-
-### Stage 4: Autonomous Schema Generation & Self-Healing Loop
-When a template does not exist (cold start) or structural drift is detected:
+## 3. Seven-Stage Pipeline Architecture
 
 ```
-[ Extraction Yield = 0 OR Mandatory Fields Missing ]
-                     │
-                     ▼
-        [ Trigger Self-Healing Loop ]
-                     │
-                     ▼
-      [ Crawl4AI: Fetch Cleaned HTML Sample ]
-                     │
-                     ▼
-[ JsonCssExtractionStrategy.agenerate_schema() via Gemini LLM ]
-                     │
-                     ▼
-            [ Validation Gate ]
-     - Container matched >= 1 element?
-     - Title is non-empty string?
-     - Apply URL or Source URL present?
-          │                     │
-        Passed                Failed
-          │                     │
-          ▼                     ▼
-[ Update Source Template ]   [ Fallback to LLMExtractionStrategy & Alert ]
-[ Reset drift_detected ]
+[ Admin: Adds Source URL ]
+           │
+           ▼
+[ Stage 0: Zero-Config Onboarding & Relevance Gate ]
+  (Pre-AI Check ➔ Crawl ➔ AI Site Inspection ➔ Store Config & Languages)
+           │
+           ▼
+[ Stage 1: Batch Operation Initialization ]
+  (POST /api/v1/scrape/run ➔ operation_id ➔ 202 Accepted ➔ Background Task)
+           │
+           ▼
+[ Stage 2: Crawl4AI Core Crawling & Anti-Bot Defense ]
+  (Headless Chromium + Stealth ➔ Target Domain Verification ➔ Politeness Delays)
+           │
+           ▼
+[ Stage 3: Multi-Template Pool Matching (Zero LLM Cost) ]
+  (Evaluate DOM against historical template pool ➔ Match Found? ➔ Use Immediately)
+           │
+      No Match Found
+           ▼
+[ Stage 4: Autonomous AI Schema Synthesis & Content Gate ]
+  (Domain Relevance Gate ➔ agenerate_schema ➔ Dry-Run Test ➔ Add to Template Pool)
+           │
+           ▼
+[ Stage 5: Dynamic Pagination & Level 1 Traversal ]
+  (URL params / Next buttons ➔ Discovered URLs saved to raw_listings)
+           │
+           ▼
+[ Stage 6: Level 2 Detail Crawl, S3 Document Download & Anti-Fraud ]
+  (Extract Details ➔ Verify Link / Follow Redirects ➔ Stream PDFs to AWS S3)
+           │
+           ▼
+[ Stage 7: Downstream Handoff & Operation Telemetry ]
+  (Save raw_grant_details with status="pending" ➔ Finalize scrape_operations ➔ Webhook)
 ```
-
-1. **Detection:** A source is flagged as `drift_detected = true` if:
-   * Level 1 yields 0 items where items were previously expected.
-   * Level 2 returns null for mandatory fields (`title` or `official_apply_url` / `source_url`).
-2. **Autonomous Generation:** Invokes `JsonCssExtractionStrategy.agenerate_schema` passing the cleaned HTML DOM, canonical target JSON schema, and Gemini configuration.
-3. **Dry-Run Validation Gate:** Runs the candidate schema against the fetched sample. If it extracts the mandatory fields, it is automatically written to `Source.level_1_template` or `level_2_template`.
-4. **Resumption:** Scraping immediately resumes using the newly persisted template without human intervention or application redeployment.
-
-### Stage 5: Link Legitimacy, Anti-Fraud & Document Download Handling
-Before saving the extracted Level 2 record:
-
-#### 1. Link Verification & Anti-Fraud
-* Executes an asynchronous `HEAD` or lightweight `GET` request following HTTP redirects.
-* Discovers the `final_application_url`.
-* **Checks:**
-  * Valid SSL certificate.
-  * HTTP status returns `200 OK`.
-  * Detects and flags suspicious ad-redirects, known scam referral domains, or landing pages asking for unauthorized payment.
-* Stores verification status: `verified`, `suspicious`, or `unreachable`.
-
-#### 2. File / PDF Attachment Handling
-* If the destination URL or `Content-Type` header indicates a downloadable file (`application/pdf`, `.docx`):
-  1. Streams and downloads the document to persistent local storage (`storage/attachments/{source_id}/{file_hash}.pdf`).
-  2. Computes the SHA256 checksum to prevent duplicate storage.
-  3. Records `has_attachment = true` with full path, size, and mime-type in `raw_grant_details.attachment_metadata`.
-
-### Stage 6: Language Determination & Bilingual Routing
-* **Script Frequency Analysis:** Evaluates the extracted text using Unicode range checks:
-  * Arabic block: `[\u0600-\u06FF]`.
-  * If Arabic character count exceeds 30% of total letters, `detected_language = "ar"`.
-  * Otherwise, `detected_language = "en"`.
-* Recorded on `raw_grant_details` so the downstream cleaning module knows whether to translate from AR $\rightarrow$ EN or EN $\rightarrow$ AR.
-
-### Stage 7: Downstream Handoff (The Producer-Consumer Contract)
-* Once Level 2 extraction, link verification, and language detection are complete:
-  * A record is inserted into `raw_grant_details` with `status = "pending"`.
-  * The parent `raw_listings` record is updated to `status = "details_extracted"`.
-* **Operation Finalization:**
-  * When all sources in the batch finish, `scrape_operations` is marked `status = "completed"`.
-  * The webhook client sends a structured `ScrapeCompletePayload` containing the `operation_id`, total counts, and succeeded/failed source lists to the primary backend.
 
 ---
 
-## 4. Dependencies & Technical Requirements
+### Stage 0: Zero-Configuration Onboarding & Relevance Gate
+When an administrator registers a new URL in `sources`:
+1. **Pre-AI Target Verification:**
+   * Perform an HTTP head/connectivity check to ensure the domain is active.
+   * Intercept parking domains, DNS errors, or HTTP 403/404/500 screens before invoking AI.
+2. **Initial Crawl via Crawl4AI:**
+   * Crawl the entry page in headless stealth mode to fetch `cleaned_html`.
+3. **AI Content Inspection & Relevance Gate:**
+   * The initial analysis prompt instructs the LLM:
+     > *"Verify whether this page represents an authentic educational opportunity, scholarship, or academic portal. If the site is irrelevant, an ad-farm, or a dead domain, return `{ 'error': 'ERR_IRRELEVANT_CONTENT_REJECTED' }`."*
+   * If rejected, the source is marked `is_active = false` with an administrative alert, avoiding further compute or LLM expense.
+4. **Autonomous Configuration Extraction:**
+   * If valid, the AI analyzes the HTML to identify:
+     * Site name and description.
+     * Supported languages (detecting language toggle links, `hreflang` tags, or route prefixes like `/ar/` or `/en/`).
+     * Pagination structure (URL query pattern, CSS next button, or infinite scroll).
+     * Optimal DOM wait selector and timeouts.
+   * Automatically populates `source_configs`.
 
-| Component | Library / Tool | Purpose |
+---
+
+### Stage 1: Batch Operation Initialization
+1. Initiated via `POST /api/v1/scrape/run` (with optional `source_ids: list[str]`).
+2. Generates a distinct `operation_id = uuid4()`.
+3. Queries eligible sources: `WHERE is_active = true`.
+4. Creates an entry in `scrape_operations` with `status = "running"`.
+5. Returns `HTTP 202 Accepted` immediately with operation metadata.
+6. Enqueues the asynchronous orchestrator in FastAPI `BackgroundTasks`.
+
+---
+
+### Stage 2: Crawl4AI Core Crawling & Anti-Bot Defense
+1. **Browser Execution:**
+   * Managed via `crawl4ai.AsyncWebCrawler` using headless Chromium.
+   * Stealth parameters enabled to bypass Cloudflare and standard bot challenges.
+2. **Politeness & Rate-Limiting:**
+   * Implements random jitter delays (2.0s to 4.5s) between consecutive requests to the same domain.
+   * Rotates standard modern desktop User-Agents.
+3. **Target Domain Verification:**
+   * Confirms the retrieved page URL matches the target domain (detecting unwanted redirects to parking domains or captive portals).
+
+---
+
+### Stage 3: Multi-Template Pool Matching (Zero LLM Cost)
+When processing Level 1 (listing) or Level 2 (detail) HTML:
+1. The engine retrieves **all active templates** for this source from `scraping_templates` ordered by `hit_count DESC`.
+2. **Fast Evaluation Gate:**
+   * Iterates through candidate templates without invoking AI.
+   * Runs `JsonCssExtractionStrategy(schema=template_schema)` on the current HTML.
+   * Verifies critical fields:
+     * Level 1: `base_selector` yields $\ge 1$ item, and items contain a valid URL.
+     * Level 2: Mandatory fields (`title` and `application_url` / `source_url`) are present.
+3. **Outcome:**
+   * **Match Found:** Increments `hit_count`, updates `last_successful_use_at`, and immediately proceeds with the extracted data. This handles platforms alternating across 2–4 layouts with zero LLM overhead.
+   * **All Fail:** Proceeds to Stage 4.
+
+---
+
+### Stage 4: Autonomous AI Schema Synthesis & Content Gate
+Triggered only when no existing template in the pool matches the current layout:
+1. **AI Content Re-Validation Gate:**
+   * The synthesis prompt enforces a strict verification check:
+     > *"Before generating extraction selectors, verify that this page contains scholarship/opportunity information. If the content represents an error page, expired listing, or unrelated text, return: `{'error': 'ERR_NOT_OPPORTUNITY_PORTAL'}`."*
+   * If an error code is returned, synthesis aborts cleanly, and the incident is logged in `scrape_operations.error_summary`.
+2. **Schema Generation via Crawl4AI:**
+   * Executes `JsonCssExtractionStrategy.agenerate_schema` using Gemini Flash via `LLMConfig`.
+   * Targets canonical JSON contracts (Level 1: cards, pagination; Level 2: full scholarship attributes).
+3. **Dry-Run Validation Gate:**
+   * Runs the candidate schema against the retrieved HTML sample.
+   * Must pass the strict validation gate (valid container, non-empty title, valid action link).
+4. **Template Library Update:**
+   * Stores the validated schema as a new version in `scraping_templates`.
+   * Resets `source_configs.drift_detected = false`.
+   * The new template is now part of the source's permanent layout pool.
+
+---
+
+### Stage 5: Dynamic Pagination & Full Catalog Traversal
+1. Reads `pagination_type` and `pagination_config` from `source_configs`:
+   * **URL Parameter Pagination:** Iterates `?page=N` or `?paged=N` until zero new items or `max_pages_per_run` is reached.
+   * **Next Button Selector:** Crawl4AI follows `.pagination .next a[href]` until absent.
+   * **Varying Page Sizes:** Handles platforms with configurable page sizes (e.g. `?limit=50`).
+2. Discovered links are upserted into `raw_listings`:
+   ```sql
+   INSERT INTO raw_listings (operation_id, source_id, discovered_url, card_title_preview, listing_page_url, status)
+   VALUES (...)
+   ON CONFLICT (source_id, discovered_url) DO NOTHING;
+   ```
+3. Guarantees idempotency—existing scholarships are not re-queued unnecessarily.
+
+---
+
+### Stage 6: Detail Crawl, S3 Document Download & Anti-Fraud
+For each newly discovered `raw_listing`:
+1. Navigates to the scholarship detail URL via Crawl4AI.
+2. Extracts comprehensive fields using the active/matched Level 2 template.
+3. **Application Link Verification (Anti-Fraud Gate):**
+   * Performs an asynchronous `HEAD`/`GET` request following HTTP redirects.
+   * Resolves the `final_application_url`.
+   * Flags suspicious patterns (ad-shorteners, spam redirects, unencrypted HTTP submission portals).
+4. **AWS S3 Document / PDF Stream Downloader:**
+   * If the target application link points to a file (`Content-Type: application/pdf`, `.docx`, etc.):
+     1. Streams the file contents directly to AWS S3:
+        `s3://{BUCKET_NAME}/attachments/{source_id}/{sha256_hash}.pdf`
+     2. Sets `has_attachment = true`.
+     3. Saves S3 key, file size, mime-type, and SHA256 checksum in `attachment_metadata`.
+5. **Language Determination:**
+   * Evaluates text using Unicode character analysis:
+     * Arabic range: `[\u0600-\u06FF]`.
+     * If Arabic characters $> 30\%$, sets `detected_language = "ar"`; otherwise `"en"`.
+
+---
+
+### Stage 7: Downstream Handoff & Operation Telemetry
+1. Inserts the extracted record into `raw_grant_details` with `status = "pending"`.
+2. Updates `raw_listings.status = "details_extracted"`.
+3. **Batch Wrap-Up:**
+   * Once all sources complete, updates `scrape_operations`:
+     * `status = "completed"` (or `"partial"` if any source failed).
+     * Compiles `total_listings_found`, `total_details_extracted`, `total_files_downloaded`.
+     * Writes `error_summary`.
+   * Dispatches the completion webhook payload to the primary backend.
+
+---
+
+## 4. Phasing Out the Legacy Scraping System
+
+All legacy adapters and static files are scheduled for complete deletion:
+
+| Legacy Component to Remove | Replacement in New Architecture |
+| :--- | :--- |
+| `src/modules/scraping/adapters/almin7_adapter.py` | Unified `Crawl4AiCrawler` + Dynamic Level 1/2 Templates |
+| `src/modules/scraping/adapters/grabscholarship_adapter.py` | Unified `Crawl4AiCrawler` + Dynamic Level 1/2 Templates |
+| `src/modules/scraping/adapters/scholars4dev_adapter.py` | Unified `Crawl4AiCrawler` + Dynamic Level 1/2 Templates |
+| `src/modules/scraping/adapters/wordpress_api_adapter.py` | Unified `Crawl4AiCrawler` + Dynamic Level 1/2 Templates |
+| `src/modules/scraping/adapters/adapter_factory.py` | `TemplateEngine` matching against `scraping_templates` |
+| `src/modules/scraping/adapters/base_adapter.py` | Replaced by `CrawlerProtocol` and `TemplateEngineProtocol` |
+
+---
+
+## 5. Pre-Defined AI Error Codes & Guardrails
+
+To prevent LLM billing waste on invalid content, the AI prompts enforce the following strict error code contract:
+
+| Error Code | Trigger Condition | System Action |
 | :--- | :--- | :--- |
-| **Web Crawler** | `crawl4ai>=0.9.4` | Modern async browser automation, anti-bot handling, and cleaned DOM retrieval |
-| **Browser Engine** | Playwright / Chromium | Headless browser execution environment |
-| **LLM Provider** | Google Gemini (`google-generativeai`) | Schema synthesis via `agenerate_schema` |
-| **Database ORM** | Prisma Client Python (`prisma`) | Schema migrations, type-safe queries, connection pooling |
-| **Direct DB Reads** | `asyncpg` | High-speed concurrent reads and bulk operations |
-| **File Storage** | Local volume / S3 compatible | Persistent document/PDF attachments storage |
+| `ERR_IRRELEVANT_CONTENT_REJECTED` | Site is a blog, commercial store, or unrelated content | Deactivates source; sends admin alert |
+| `ERR_NOT_OPPORTUNITY_PORTAL` | Page is a dead link, 404, or generic home screen | Increments `consecutive_failures`; skips page |
+| `ERR_ACCESS_CHALLENGE_BLOCKED` | Cloudflare / CAPTCHA challenge captured in DOM | Flags proxy/stealth failure; triggers cool-down |
+| `ERR_PARKING_OR_EXPIRED_DOMAIN` | Domain expired, domain-for-sale, or registrar splash | Deactivates source permanently |
+| `ERR_SCHEMA_VALIDATION_FAILED` | Generated selectors failed dry-run against HTML sample | Retries generation once with negative feedback |
 
 ---
 
-## 5. Phased Implementation Roadmap
+## 6. Phased Implementation Roadmap
 
-* **Phase 1: Schema Updates & Database Migration:**
-  Create tables `scrape_operations`, `raw_listings`, `raw_grant_details`, and update `sources` in `prisma/schema.prisma`.
-* **Phase 2: Crawl4AI Crawler Wrapper:**
-  Implement `Crawl4AiCrawler` with browser initialization, proxy/user-agent settings, and rate-limiting delays.
-* **Phase 3: Multi-Level Template Engine & Generator:**
-  Implement `TemplateEngine` supporting Level 1 & Level 2 `JsonCssExtractionStrategy`, template validation gates, and Gemini-backed `agenerate_schema`.
-* **Phase 4: Link Verifier & File Downloader:**
-  Implement `LinkVerificationService` (redirect follower, fraud detection) and `DocumentStorageService` (stream downloading, SHA256 deduplication).
-* **Phase 5: Orchestrator Integration & Unit Testing:**
-  Update `ScraperService` to run the end-to-end pipeline, record metrics in `scrape_operations`, and cover edge cases with unit tests following `AGENT.md`.
+```mermaid
+flowchart LR
+    P1[Phase 1: DB Schema & Migration] --> P2[Phase 2: Crawl4AI & S3 Storage Client]
+    P2 --> P3[Phase 3: AI Onboarding & Relevance Gate]
+    P3 --> P4[Phase 4: Template Pool & Dynamic Crawler]
+    P4 --> P5[Phase 5: Link Verifier, S3 Downloader & Legacy Cleanup]
+    P5 --> P6[Phase 6: ScraperService Integration & Tests]
+```
+
+* **Phase 1: Database Architecture & Prisma Migration:**
+  Create tables: `sources` (clean), `source_configs`, `scraping_templates`, `scrape_operations`, `raw_listings`, `raw_grant_details`.
+* **Phase 2: Crawl4AI Driver & S3 Storage Client:**
+  Configure `Crawl4AiCrawler` with stealth and user-agent rotation; build `S3StorageClient` for streaming uploads.
+* **Phase 3: AI Onboarding Engine & Content Guard:**
+  Implement Stage 0 discovery worker with strict content rejection error codes.
+* **Phase 4: Multi-Template Library & Dynamic Crawler:**
+  Implement template pool matching, schema synthesis fallback, and dynamic pagination handling.
+* **Phase 5: Link Verification, S3 Downloader & Legacy Cleanup:**
+  Implement anti-fraud link checker and PDF stream downloader; delete all legacy adapter files.
+* **Phase 6: Orchestration, Webhooks & Test Suite:**
+  Connect `ScraperService` to the new pipeline, emit webhook telemetry, and author deterministic unit tests following `AGENT.md`.
