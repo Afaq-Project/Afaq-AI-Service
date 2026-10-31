@@ -2,33 +2,29 @@
 FROM python:3.12-slim as builder
 
 # Install build dependencies
-# build-essential is often needed for compiling some Python packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install poetry
-RUN pip install --no-cache-dir poetry
+# Install uv from official binary image
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Configure poetry to create the virtual environment inside the project directory
-ENV POETRY_NO_INTERACTION=1 \
-    POETRY_VIRTUALENVS_IN_PROJECT=1 \
-    POETRY_VIRTUALENVS_CREATE=1 \
-    POETRY_CACHE_DIR=/tmp/poetry_cache
+# Configure uv for containerized builds
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
 
 WORKDIR /app
 
 # Copy dependency definition files
-COPY pyproject.toml poetry.lock ./
+COPY pyproject.toml uv.lock ./
 
-# Install dependencies (only main, no dev dependencies)
-RUN poetry install --only main --no-root && rm -rf $POETRY_CACHE_DIR
+# Install dependencies without installing root project
+RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy prisma schema and generate the client
-# Prisma downloads the query engine binary during the generate step
 ENV PRISMA_BINARY_CACHE_DIR=/app/prisma-engines
 COPY prisma/ prisma/
-RUN poetry run prisma generate
+RUN uv run prisma generate
 
 # Stage 2: Runtime
 FROM python:3.12-slim
@@ -41,8 +37,7 @@ ENV PYTHONUNBUFFERED=1 \
     WEB_CONCURRENCY=1 \
     PRISMA_BINARY_CACHE_DIR=/app/prisma-engines
 
-# Install runtime dependencies
-# Prisma requires OpenSSL to run the query engine
+# Install runtime dependencies (OpenSSL is required by Prisma query engine)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl \
     ca-certificates \
