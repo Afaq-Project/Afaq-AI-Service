@@ -193,10 +193,10 @@ Migration: `prisma/migrations/20260917090000_add_conversations/`
 ## 11. التشغيل
 
 ```bash
-poetry install
-poetry run prisma generate
-poetry run prisma migrate deploy
-poetry run uvicorn src.main:app --port 8000
+uv sync
+uv run prisma generate
+uv run prisma migrate deploy
+uv run uvicorn src.main:app --port 8000
 ```
 
 المتغيّرات المطلوبة في `.env`: `DATABASE_URL`، و `AI_MODEL`، ومفتاح المزوّد المقابل. الباقي له قيم افتراضية معقولة (`AI_TIMEOUT_SECONDS`، `AI_HISTORY_LIMIT`، …) وهي موثّقة في `.env.example`.
