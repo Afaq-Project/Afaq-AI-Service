@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID
 
 import asyncpg
+
 from prisma import Prisma
 from src.modules.core.config.settings import get_settings
 from src.modules.matching.models import UserProfileDTO
@@ -119,7 +120,13 @@ class UserProfileReader:
     @staticmethod
     def _parse_row(row: Any) -> dict[str, Any]:
         data = dict(row)
-        for key in ("preferences", "skills", "languages", "educations", "fields_of_study"):
+        for key in (
+            "preferences",
+            "skills",
+            "languages",
+            "educations",
+            "fields_of_study",
+        ):
             val = data.get(key)
             if isinstance(val, str):
                 try:
