@@ -1,45 +1,39 @@
 [project]
-name = "levora-ai-service"
+name = "afaq-ai-service"
 version = "0.1.0"
-description = "Levora AI Service - Core Scraping & AI Matching Microservice"
+description = "Afaq AI Service - Core Scraping & AI Matching Microservice"
 authors = [
     {name = "Abood059", email = "ah0597414132@gmail.com"}
 ]
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
 dependencies = [
-    "fastapi[standard] (>=0.115.0)",
-    "prisma (>=0.15.0,<0.16.0)",
-    "pydantic (>=2.10.0,<3.0.0)",
-    "httpx (>=0.28.1,<0.29.0)",
-    "uvicorn[standard] (>=0.32.0)",
-    "pydantic-settings (>=2.7.0)",
-    "beautifulsoup4 (>=4.12.0)",
-    "dateparser (>=1.2.0)",
-    "asyncpg (>=0.31.0,<0.32.0)",
-    "wardhook-core (==0.2.0)",
-    "wardhook-guardrails (==0.2.0)",
-    "langchain-anthropic (>=1.0,<2.0)",
-    "anthropic (>=1.6,<2.0)",
-    "langchain-google-genai (>=2.0,<4.0)"
+    "fastapi[standard]>=0.115.0",
+    "prisma>=0.15.0,<0.16.0",
+    "pydantic>=2.10.0,<3.0.0",
+    "httpx>=0.28.1,<0.29.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic-settings>=2.7.0",
+    "beautifulsoup4>=4.12.0",
+    "dateparser>=1.2.0",
+    "asyncpg>=0.31.0,<0.32.0",
+    "wardhook-core==0.2.0",
+    "wardhook-guardrails==0.2.0",
+    "langchain-anthropic>=1.0,<2.0",
+    "anthropic>=1.6,<2.0",
+    "langchain-google-genai>=2.0,<4.0",
+    "crawl4ai>=0.9.4",
 ]
-
-[tool.poetry]
-package-mode = false
-
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
 
 [dependency-groups]
 dev = [
-    "pytest (>=9.1.1,<10.0.0)",
-    "prisma (>=0.15.0,<0.16.0)",
-    "pytest-asyncio (>=1.4.0,<2.0.0)",
-    "pytest-cov (>=7.1.0,<8.0.0)",
-    "black (>=24.0.0)",
-    "ruff (>=0.8.0)",
-    "mypy (>=1.13.0)"
+    "pytest>=9.1.1,<10.0.0",
+    "prisma>=0.15.0,<0.16.0",
+    "pytest-asyncio>=1.4.0,<2.0.0",
+    "pytest-cov>=7.1.0,<8.0.0",
+    "black>=24.0.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
 ]
 
 [tool.pytest.ini_options]
@@ -64,4 +58,5 @@ line-length = 88
 module = ["dateparser", "bs4", "asyncpg"]
 ignore_missing_imports = true
 
-
+[tool.uv]
+package = false

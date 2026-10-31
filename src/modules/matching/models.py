@@ -124,6 +124,8 @@ class SpecialStatusDTO(BaseModel):
 class TestResultDTO(BaseModel):
     """In-memory representation of a user standardized test result."""
 
+    __test__ = False
+
     model_config = ConfigDict(extra="ignore", from_attributes=True)
 
     id: UUID | str | None = None

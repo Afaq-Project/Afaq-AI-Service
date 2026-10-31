@@ -99,6 +99,24 @@ class MatchingService:
         self._feed_ranker = self._ranker
         self._hard_filter_service = self._filter
         self._rematch_lock = asyncio.Lock()
+        self._cached_opportunities: list[dict[str, Any]] | None = None
+        self._cache_timestamp: float = 0.0
+        self._cache_ttl: float = 300.0
+
+    async def _get_visible_opportunities(self) -> list[dict[str, Any]]:
+        import time
+
+        now = time.time()
+        if (
+            self._cached_opportunities is not None
+            and (now - self._cache_timestamp) < self._cache_ttl
+        ):
+            return self._cached_opportunities
+
+        raw_opps = await self._opportunity_repo.find_within_visibility_window()
+        self._cached_opportunities = [_to_dict(opp) for opp in raw_opps]
+        self._cache_timestamp = now
+        return self._cached_opportunities
 
     @property
     def is_rematch_running(self) -> bool:
@@ -118,8 +136,7 @@ class MatchingService:
             )
 
         # 2. Retrieve active opportunities within visibility window
-        raw_opps = await self._opportunity_repo.find_within_visibility_window()
-        opportunities = [_to_dict(opp) for opp in raw_opps]
+        opportunities = await self._get_visible_opportunities()
 
         # 3. Evaluate and rank opportunities using existing FeedRanker
         ranking_result = self._ranker.rank_opportunities(
@@ -292,8 +309,7 @@ class MatchingService:
             logger.info("Starting full rematch operation %s", operation_id)
 
             # 1. Fetch all active opportunities within visibility window
-            raw_opps = await self._opportunity_repo.find_within_visibility_window()
-            opportunities = [_to_dict(opp) for opp in raw_opps]
+            opportunities = await self._get_visible_opportunities()
 
             offset = 0
             total_users_processed = 0

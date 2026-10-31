@@ -32,31 +32,26 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          version: "2.4.1"
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-
-      - name: Check Poetry Lock
-        run: poetry check --lock
+          enable-cache: true
 
       - name: Install dependencies
-        run: poetry install --no-interaction --no-root
+        run: uv sync --frozen --all-groups
 
       - name: Run Ruff
-        run: poetry run ruff check src tests
+        run: uv run ruff check src tests
 
       - name: Check Code Formatting (Black)
-        run: poetry run black --check src tests
+        run: uv run black --check src tests
 
       - name: Generate Prisma Client for Linting
-        run: poetry run prisma generate
+        run: uv run prisma generate
         continue-on-error: true
 
       - name: Run Mypy
-        run: poetry run mypy src
+        run: uv run mypy src
 
   # =========================================================================
   # 2. TESTS
@@ -92,29 +87,27 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          version: "2.4.1"
-          virtualenvs-create: true
-          virtualenvs-in-project: true
+          enable-cache: true
 
       - name: Install dependencies
-        run: poetry install --no-interaction
+        run: uv sync --frozen --all-groups
 
       - name: Enable CITEXT Extension in Test Database
         run: PGPASSWORD=test_password psql -h localhost -U test_user -d levora_test -c "CREATE EXTENSION IF NOT EXISTS citext;"
 
       - name: Generate Prisma Client (if needed)
-        run: poetry run prisma generate
+        run: uv run prisma generate
         continue-on-error: true
 
       - name: Push Schema to Test Database
-        run: poetry run prisma db push --skip-generate
+        run: uv run prisma db push --skip-generate
         continue-on-error: true
 
       - name: Run Tests
-        run: poetry run pytest tests/ --cov=src || echo "No tests found or tests failed, but keeping structure"
+        run: uv run pytest tests/ --cov=src || echo "No tests found or tests failed, but keeping structure"
 
   # =========================================================================
   # 3. BUILD & TEST CONTAINER

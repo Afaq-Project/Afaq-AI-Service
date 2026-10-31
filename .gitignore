@@ -20,9 +20,8 @@ build/
 venv/
 env/
 
-# لكن احتفظ بـ poetry.lock لضمان تحديد الإصدارات
-# (إذا كنت تريد تجاهل poetry.lock في مشاريع المكتبات، لكن في مشاريع التطبيقات يُفضل الاحتفاظ به)
-# !poetry.lock
+# احتفظ بـ uv.lock لضمان تحديد الإصدارات
+!uv.lock
 
 # --------------------------------------------
 # متغيرات البيئة والملفات الحساسة (SECURITY)
@@ -63,4 +62,4 @@ htmlcov/
 *.sqlite3
 
 .agent/
-Python_Service/
+scripts/scratch/test_scraper.py

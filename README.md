@@ -44,7 +44,7 @@ All private endpoints are secured via **API Key Authentication**.
 ### Generating API Keys
 Use the provided CLI script to generate a cryptographically secure key:
 ```bash
-poetry run python scripts/generate_api_key.py "Main Service Production"
+uv run python scripts/generate_api_key.py "Main Service Production"
 ```
 Output:
 ```text
@@ -297,13 +297,13 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM levora_main_
 
 ### Prerequisites
 * Python 3.12+
-* Poetry
+* uv (Astral)
 * PostgreSQL 15+
 
 ### Installation & Configuration
 1. Clone the repository and install dependencies:
    ```bash
-   poetry install
+   uv sync
    ```
 2. Set up environment variables:
    ```bash
@@ -312,31 +312,31 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM levora_main_
    ```
 3. Generate the Prisma Client:
    ```bash
-   poetry run prisma generate
+   uv run prisma generate
    ```
 4. Run database migrations:
    ```bash
-   poetry run prisma migrate dev
+   uv run prisma migrate dev
    ```
 
 ### Running the Application
 ```bash
-poetry run uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+uv run uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
 
 ### Running Tests and Linting
 * **Run test suite:**
   ```bash
-  poetry run pytest -v
+  uv run pytest -v
   ```
 * **Run coverage analysis:**
   ```bash
-  poetry run pytest --cov=src --cov-report=term-missing
+  uv run pytest --cov=src --cov-report=term-missing
   ```
 * **Run linting & formatting checks:**
   ```bash
-  poetry run ruff check .
-  poetry run black --check .
-  poetry run mypy src
+  uv run ruff check .
+  uv run black --check .
+  uv run mypy src
   ```

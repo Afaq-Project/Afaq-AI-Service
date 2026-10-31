@@ -1,7 +1,10 @@
+import json
 import logging
 from datetime import timedelta
 from typing import Any
 from uuid import UUID
+
+import asyncpg
 
 from prisma import Prisma
 from src.modules.core.config.settings import get_settings
@@ -112,6 +115,37 @@ class UserProfileReader:
             else get_settings().profile_api_database_url
         )
         self._owns_db = db is None
+        self._asyncpg_conn: asyncpg.Connection | None = None
+
+    @staticmethod
+    def _parse_row(row: Any) -> dict[str, Any]:
+        data = dict(row)
+        for key in (
+            "preferences",
+            "skills",
+            "languages",
+            "educations",
+            "fields_of_study",
+        ):
+            val = data.get(key)
+            if isinstance(val, str):
+                try:
+                    data[key] = json.loads(val)
+                except Exception:
+                    pass
+        return data
+
+    async def _get_asyncpg_conn(self) -> asyncpg.Connection:
+        if self._asyncpg_conn is None or self._asyncpg_conn.is_closed():
+            if not self._database_url:
+                raise ValueError(
+                    "PROFILE_API_DATABASE_URL is not configured and no database client was provided."
+                )
+            clean_url = self._database_url.split("?")[0]
+            self._asyncpg_conn = await asyncpg.connect(
+                clean_url, statement_cache_size=0, timeout=15.0
+            )
+        return self._asyncpg_conn
 
     async def get_client(self) -> Prisma:
         """Returns the connected Prisma client, initializing it if needed."""
@@ -128,6 +162,9 @@ class UserProfileReader:
 
     async def close(self) -> None:
         """Disconnects the client if managed internally."""
+        if self._asyncpg_conn is not None and not self._asyncpg_conn.is_closed():
+            await self._asyncpg_conn.close()
+            self._asyncpg_conn = None
         if self._owns_db and self._db is not None and self._db.is_connected():
             await self._db.disconnect()
             self._db = None
@@ -135,7 +172,7 @@ class UserProfileReader:
     async def get_profile_by_user_id(
         self, user_id: UUID | str
     ) -> UserProfileDTO | None:
-        """Retrieves a user profile by UUID from public.v_user_full_profile.
+        """Retrieves a user profile by UUID from public user tables.
 
         Args:
             user_id: The UUID of the user to fetch.
@@ -152,12 +189,16 @@ class UserProfileReader:
         else:
             user_uuid_str = str(user_id)
 
-        client = await self.get_client()
         try:
-            rows: list[dict[str, Any]] = await client.query_raw(
-                SELECT_USER_PROFILE_QUERY,
-                user_uuid_str,
-            )
+            if self._db is not None:
+                client = await self.get_client()
+                rows = await client.query_raw(
+                    SELECT_USER_PROFILE_QUERY,
+                    user_uuid_str,
+                )
+            else:
+                conn = await self._get_asyncpg_conn()
+                rows = await conn.fetch(SELECT_USER_PROFILE_QUERY, user_uuid_str)
         except Exception as exc:
             logger.error("Failed to query user profile for %s: %s", user_uuid_str, exc)
             return None
@@ -165,7 +206,7 @@ class UserProfileReader:
         if not rows:
             return None
 
-        return UserProfileDTO(**rows[0])
+        return UserProfileDTO(**self._parse_row(rows[0]))
 
     async def get_all_profiles(
         self, limit: int = 100, offset: int = 0
@@ -179,13 +220,17 @@ class UserProfileReader:
         Returns:
             List of UserProfileDTO objects.
         """
-        client = await self.get_client()
         try:
-            rows: list[dict[str, Any]] = await client.query_raw(
-                SELECT_ALL_USER_PROFILES_QUERY,
-                limit,
-                offset,
-            )
+            if self._db is not None:
+                client = await self.get_client()
+                rows = await client.query_raw(
+                    SELECT_ALL_USER_PROFILES_QUERY,
+                    limit,
+                    offset,
+                )
+            else:
+                conn = await self._get_asyncpg_conn()
+                rows = await conn.fetch(SELECT_ALL_USER_PROFILES_QUERY, limit, offset)
         except Exception as exc:
             logger.error(
                 "Failed to query all user profiles (limit=%d, offset=%d): %s",
@@ -195,4 +240,4 @@ class UserProfileReader:
             )
             return []
 
-        return [UserProfileDTO(**row) for row in rows]
+        return [UserProfileDTO(**self._parse_row(row)) for row in rows]

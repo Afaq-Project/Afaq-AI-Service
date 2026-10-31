@@ -24,8 +24,8 @@ Pipfile.lock
 .git
 .gitignore
 
-# Poetry
-.poetry/
+# uv cache
+.uv/
 
 # Docker
 Dockerfile
