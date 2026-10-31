@@ -1,0 +1,802 @@
+// [OMA-W006-T001] Setup @xenova/transformers and pgvector previewFeatures
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector]
+}
+
+
+// ============================================================================
+// PART 1: AFAQ-BACKEND BASE TABLES (100% UNCHANGED)
+// ============================================================================
+
+model Users {
+  id                      String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email                   String               @unique @db.Citext
+  password                String?
+  firstName               String               @map("first_name") @db.VarChar(255)
+  lastName                String               @map("last_name") @db.VarChar(255)
+  isEmailVerified         Boolean              @default(false) @map("is_email_verified")
+  isActive                Boolean              @default(true) @map("is_active")
+  lastLoginAt             DateTime?            @map("last_login_at") @db.Timestamptz(6)
+  deletedAt               DateTime?            @map("deleted_at") @db.Timestamptz(6)
+  createdAt               DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime?            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  passwordResetRequired   Boolean              @default(false) @map("password_reset_required")
+  passwordResetRequiredAt DateTime?            @map("password_reset_required_at") @db.Timestamptz(6)
+  notifications           Notifications[]
+  oauthIdentities         OauthIdentities[]
+  payments                Payments[]
+  savedOpportunities      SavedOpportunities[]
+  subscription            Subscriptions?
+  userProfile             UserProfiles?
+  userRoles               UserRoles[]
+
+  // Reverse relations to Integrated Drafts & AI Modules
+  draftSpacesOwned        DraftSpaces[]
+  draftPages              DraftPages[]
+  draftPageVersions       DraftPageVersions[]
+  draftAttachments        DraftAttachments[]
+  draftTemplates          DraftTemplates[]
+  aiConversations         AiConversations[]
+  invitationsSent         Invitations[]        @relation("InvitationsSent")
+  // [OMA-W006-T002] Feature 11 AI Message Embeddings & Edit Proposals
+  aiMessageEmbeddings     AiMessageEmbeddings[]
+  aiEditProposals         AiEditProposals[]
+
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model Roles {
+  id          Int         @id @default(autoincrement())
+  name        String      @unique @db.VarChar(100)
+  description String?     @db.VarChar(255)
+  isActive    Boolean     @default(true) @map("is_active")
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime?   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  userRoles   UserRoles[]
+  invitations Invitations[]
+
+  @@map("roles")
+}
+
+model UserRoles {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  roleId    Int       @map("role_id")
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime? @updatedAt @map("updated_at") @db.Timestamptz(6)
+  role      Roles     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user      Users     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+model OauthIdentities {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  provider        String
+  providerUserId  String    @map("provider_user_id")
+  accessTokenRef  String?   @map("access_token_ref")
+  refreshTokenRef String?   @map("refresh_token_ref")
+  linkedAt        DateTime  @default(now()) @map("linked_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime? @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user            Users     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@map("oauth_identities")
+}
+
+model UserProfiles {
+  userId               String                   @id @map("user_id") @db.Uuid
+  dateOfBirth          DateTime?                @map("date_of_birth") @db.Date
+  phone                String?
+  profilePhotoUrl      String?                  @map("profile_photo_url")
+  completionPct        Int                      @default(0) @map("completion_pct")
+  matchingVersion      Int                      @default(1) @map("matching_version")
+  createdAt            DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime?                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  educationLevelId     String?                  @map("education_level_id") @db.Uuid
+  bio                  String?
+  countryOfResidenceId String?                  @map("country_of_residence_id") @db.Uuid
+  currentCityId        String?                  @map("current_city_id") @db.Uuid
+  email                String?
+  firstName            String?                  @map("first_name") @db.VarChar(255)
+  gender               Gender?
+  isMatchable          Boolean                  @default(false) @map("is_matchable")
+  lastName             String?                  @map("last_name") @db.VarChar(255)
+  maritalStatusId      String?                  @map("marital_status_id") @db.Uuid
+  nationalityId        String?                  @map("nationality_id") @db.Uuid
+  experiences          String[]                 @default([]) @map("experiences")
+  documents            Documents[]
+  educations           UserEducations[]
+  languages            UserLanguages[]
+  countryOfResidence   Countries?               @relation("ProfileResidence", fields: [countryOfResidenceId], references: [id])
+  currentCity          Cities?                  @relation(fields: [currentCityId], references: [id])
+  educationLevel       EducationLevel?          @relation(fields: [educationLevelId], references: [id])
+  maritalStatus        MaritalStatuses?         @relation(fields: [maritalStatusId], references: [id])
+  nationality          Countries?               @relation("ProfileNationality", fields: [nationalityId], references: [id])
+  user                 Users                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  specialStatuses      UserSpecialStatuses[]
+  targetDegrees        UserTargetDegrees[]
+  targetInstitutions   UserTargetInstitutions[]
+  targetMajors         UserTargetMajors[]
+  testResults          UserTestResults[]
+
+  @@index([isMatchable])
+  @@index([matchingVersion])
+  @@map("user_profiles")
+}
+
+model Countries {
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nameEn            String         @map("name_en") @db.VarChar(100)
+  nameAr            String         @map("name_ar") @db.VarChar(100)
+  nationalityNameEn String?        @map("nationality_name_en") @db.VarChar(100)
+  nationalityNameAr String?        @map("nationality_name_ar") @db.VarChar(100)
+  isoCode           String?        @unique @map("iso_code") @db.VarChar(3)
+  isoCode2          String?        @unique @map("iso_code2") @db.VarChar(2)
+  regionEn          String?        @map("region_en") @db.VarChar(100)
+  regionAr          String?        @map("region_ar") @db.VarChar(100)
+  phoneCode         String?        @map("phone_code") @db.VarChar(10)
+  flagEmoji         String?        @map("flag_emoji") @db.VarChar(10)
+  externalSourceId  String?        @unique @map("external_source_id") @db.VarChar(100)
+  isActive          Boolean        @default(true) @map("is_active")
+  sortOrder         Int            @default(0) @map("sort_order")
+  cities            Cities[]
+  institutions      Institutions[]
+  residentProfiles  UserProfiles[] @relation("ProfileResidence")
+  nationalProfiles  UserProfiles[] @relation("ProfileNationality")
+
+  @@index([nameEn])
+  @@map("countries")
+}
+
+model Cities {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nameEn       String         @map("name_en") @db.VarChar(150)
+  nameAr       String         @map("name_ar") @db.VarChar(150)
+  countryId    String         @map("country_id") @db.Uuid
+  isActive     Boolean        @default(true) @map("is_active")
+  sortOrder    Int            @default(0) @map("sort_order")
+  country      Countries      @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  institutions Institutions[]
+  userProfiles UserProfiles[]
+
+  @@index([countryId])
+  @@map("cities")
+}
+
+model Institutions {
+  id               String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nameEn           String                   @map("name_en") @db.VarChar(255)
+  nameAr           String                   @map("name_ar") @db.VarChar(255)
+  shortNameEn      String?                  @map("short_name_en") @db.VarChar(100)
+  shortNameAr      String?                  @map("short_name_ar") @db.VarChar(100)
+  countryId        String?                  @map("country_id") @db.Uuid
+  cityId           String?                  @map("city_id") @db.Uuid
+  type             String?                  @db.VarChar(50)
+  websiteUrl       String?                  @map("website_url")
+  logoUrl          String?                  @map("logo_url")
+  externalSourceId String?                  @unique @map("external_source_id") @db.VarChar(100)
+  isActive         Boolean                  @default(true) @map("is_active")
+  sortOrder        Int                      @default(0) @map("sort_order")
+  city             Cities?                  @relation(fields: [cityId], references: [id])
+  country          Countries?               @relation(fields: [countryId], references: [id])
+  userEducations   UserEducations[]
+  targetedBy       UserTargetInstitutions[]
+
+  @@index([countryId])
+  @@index([cityId])
+  @@index([type])
+  @@map("institutions")
+}
+
+model MajorCategories {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nameEn    String   @unique @map("name_en") @db.VarChar(150)
+  nameAr    String   @map("name_ar") @db.VarChar(150)
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  majors    Majors[]
+
+  @@map("major_categories")
+}
+
+model Majors {
+  id                    String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nameEn                String             @map("name_en") @db.VarChar(255)
+  nameAr                String             @map("name_ar") @db.VarChar(255)
+  categoryId            String?            @map("category_id") @db.Uuid
+  externalSourceId      String?            @unique @map("external_source_id") @db.VarChar(100)
+  isActive              Boolean            @default(true) @map("is_active")
+  sortOrder             Int                @default(0) @map("sort_order")
+  category              MajorCategories?   @relation(fields: [categoryId], references: [id])
+  userEducationsAsMajor UserEducations[]   @relation("PrimaryMajor")
+  userEducationsAsMinor UserEducations[]   @relation("MinorMajor")
+  targetedBy            UserTargetMajors[]
+
+  @@index([categoryId])
+  @@map("majors")
+}
+
+model EducationLevel {
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  isActive       Boolean             @default(true) @map("is_active")
+  code           String              @unique @db.VarChar(50)
+  nameAr         String              @map("name_ar") @db.VarChar(100)
+  nameEn         String              @map("name_en") @db.VarChar(100)
+  sortOrder      Int                 @default(0) @map("sort_order")
+  userEducations UserEducations[]
+  userProfiles   UserProfiles[]
+  targetedBy     UserTargetDegrees[]
+
+  @@map("education_levels")
+}
+
+model MaritalStatuses {
+  id        String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nameEn    String         @unique @map("name_en") @db.VarChar(50)
+  nameAr    String         @map("name_ar") @db.VarChar(50)
+  isActive  Boolean        @default(true) @map("is_active")
+  sortOrder Int            @default(0) @map("sort_order")
+  profiles  UserProfiles[]
+
+  @@map("marital_statuses")
+}
+
+model SpecialStatuses {
+  id        String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nameEn    String                @unique @map("name_en") @db.VarChar(100)
+  nameAr    String                @map("name_ar") @db.VarChar(100)
+  isActive  Boolean               @default(true) @map("is_active")
+  sortOrder Int                   @default(0) @map("sort_order")
+  users     UserSpecialStatuses[]
+
+  @@map("special_statuses")
+}
+
+model StandardizedTests {
+  id        String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nameEn    String            @unique @map("name_en") @db.VarChar(100)
+  nameAr    String            @map("name_ar") @db.VarChar(100)
+  minScore  Decimal           @map("min_score") @db.Decimal(6, 2)
+  maxScore  Decimal           @map("max_score") @db.Decimal(6, 2)
+  scoreStep Decimal           @map("score_step") @db.Decimal(4, 2)
+  isActive  Boolean           @default(true) @map("is_active")
+  sortOrder Int               @default(0) @map("sort_order")
+  results   UserTestResults[]
+
+  @@map("standardized_tests")
+}
+
+model LanguagesMaster {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  isActive      Boolean         @default(true) @map("is_active")
+  isoCode       String?         @unique @map("iso_code") @db.VarChar(5)
+  nameAr        String          @map("name_ar") @db.VarChar(100)
+  nameEn        String          @unique @map("name_en") @db.VarChar(100)
+  sortOrder     Int             @default(0) @map("sort_order")
+  userLanguages UserLanguages[]
+
+  @@map("languages_master")
+}
+
+model ProficiencyLevels {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nameEn        String          @unique @map("name_en") @db.VarChar(50)
+  nameAr        String          @map("name_ar") @db.VarChar(50)
+  isActive      Boolean         @default(true) @map("is_active")
+  sortOrder     Int             @default(0) @map("sort_order")
+  userLanguages UserLanguages[]
+
+  @@map("proficiency_levels")
+}
+
+model DocumentTypes {
+  id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nameEn    String      @unique @map("name_en") @db.VarChar(50)
+  nameAr    String      @map("name_ar") @db.VarChar(50)
+  isActive  Boolean     @default(true) @map("is_active")
+  sortOrder Int         @default(0) @map("sort_order")
+  documents Documents[]
+
+  @@map("document_types")
+}
+
+model NotificationTypes {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code          String          @unique @db.VarChar(50)
+  nameEn        String          @map("name_en") @db.VarChar(100)
+  nameAr        String          @map("name_ar") @db.VarChar(100)
+  isActive      Boolean         @default(true) @map("is_active")
+  sortOrder     Int             @default(0) @map("sort_order")
+  notifications Notifications[]
+
+  @@map("notification_types")
+}
+
+model SystemSettings {
+  key         String   @id @db.VarChar(100)
+  value       Json
+  description String?
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("system_settings")
+}
+
+model UserSpecialStatuses {
+  userId          String          @map("user_id") @db.Uuid
+  specialStatusId String          @map("special_status_id") @db.Uuid
+  status          SpecialStatuses @relation(fields: [specialStatusId], references: [id], onDelete: Cascade)
+  user            UserProfiles    @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@id([userId, specialStatusId])
+  @@map("user_special_statuses")
+}
+
+model UserTargetDegrees {
+  userId           String         @map("user_id") @db.Uuid
+  educationLevelId String         @map("education_level_id") @db.Uuid
+  level            EducationLevel @relation(fields: [educationLevelId], references: [id], onDelete: Cascade)
+  user             UserProfiles   @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@id([userId, educationLevelId])
+  @@map("user_target_degrees")
+}
+
+model UserTargetMajors {
+  userId  String       @map("user_id") @db.Uuid
+  majorId String       @map("major_id") @db.Uuid
+  major   Majors       @relation(fields: [majorId], references: [id], onDelete: Cascade)
+  user    UserProfiles @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@id([userId, majorId])
+  @@map("user_target_majors")
+}
+
+model UserTargetInstitutions {
+  userId        String       @map("user_id") @db.Uuid
+  institutionId String       @map("institution_id") @db.Uuid
+  institution   Institutions @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  user          UserProfiles @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@id([userId, institutionId])
+  @@map("user_target_institutions")
+}
+
+model UserEducations {
+  id                     String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                 String         @map("user_id") @db.Uuid
+  gpaRaw                 Decimal?       @map("gpa_raw") @db.Decimal(5, 2)
+  createdAt              DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime?      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  educationLevelId       String         @map("education_level_id") @db.Uuid
+  endDate                DateTime?      @map("end_date") @db.Date
+  expectedGraduationDate DateTime?      @map("expected_graduation_date") @db.Date
+  gpaNormalized          Decimal?       @map("gpa_normalized") @db.Decimal(5, 2)
+  gpaScale               GpaScale?      @map("gpa_scale")
+  institutionId          String         @map("institution_id") @db.Uuid
+  isCurrent              Boolean        @default(false) @map("is_current")
+  majorId                String         @map("major_id") @db.Uuid
+  minorMajorId           String?        @map("minor_major_id") @db.Uuid
+  startDate              DateTime?      @map("start_date") @db.Date
+  educationLevel         EducationLevel @relation(fields: [educationLevelId], references: [id])
+  institution            Institutions   @relation(fields: [institutionId], references: [id])
+  major                  Majors         @relation("PrimaryMajor", fields: [majorId], references: [id])
+  minorMajor             Majors?        @relation("MinorMajor", fields: [minorMajorId], references: [id])
+  user                   UserProfiles   @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@unique([userId, institutionId, majorId, educationLevelId])
+  @@index([userId, updatedAt])
+  @@map("user_educations")
+}
+
+model UserLanguages {
+  userId             String            @map("user_id") @db.Uuid
+  languageId         String            @map("language_id") @db.Uuid
+  isNative           Boolean           @default(false) @map("is_native")
+  proficiencyLevelId String            @map("proficiency_level_id") @db.Uuid
+  language           LanguagesMaster   @relation(fields: [languageId], references: [id], onDelete: Cascade)
+  proficiencyLevel   ProficiencyLevels @relation(fields: [proficiencyLevelId], references: [id])
+  user               UserProfiles      @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@id([userId, languageId])
+  @@index([proficiencyLevelId])
+  @@map("user_languages")
+}
+
+model UserTestResults {
+  id       String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId   String            @map("user_id") @db.Uuid
+  testId   String            @map("test_id") @db.Uuid
+  score    Decimal           @db.Decimal(6, 2)
+  testDate DateTime?         @map("test_date") @db.Date
+  test     StandardizedTests @relation(fields: [testId], references: [id])
+  user     UserProfiles      @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@unique([userId, testId])
+  @@index([userId])
+  @@map("user_test_results")
+}
+
+model Documents {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String        @map("user_id") @db.Uuid
+  displayName    String        @map("display_name")
+  storagePath    String        @map("storage_path")
+  mimeType       String        @map("mime_type")
+  sizeBytes      Int           @map("size_bytes")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime?     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  documentTypeId String        @map("document_type_id") @db.Uuid
+  documentType   DocumentTypes @relation(fields: [documentTypeId], references: [id])
+  user           UserProfiles  @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  draftPages     DraftPages[]
+
+  @@index([userId])
+  @@index([documentTypeId])
+  @@map("documents")
+}
+
+model Subscriptions {
+  userId               String    @id @map("user_id") @db.Uuid
+  plan                 String    @default("free")
+  billingCycle         String?   @map("billing_cycle")
+  status               String    @default("active")
+  stripeCustomerId     String?   @map("stripe_customer_id")
+  stripeSubscriptionId String?   @map("stripe_subscription_id")
+  currentPeriodEnd     DateTime? @map("current_period_end") @db.Timestamptz(6)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime? @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user                 Users     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([stripeSubscriptionId])
+  @@map("subscriptions")
+}
+
+model Payments {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  amountCents     Int       @map("amount_cents")
+  currency        String    @default("USD") @db.Char(3)
+  status          String
+  stripePaymentId String    @unique @map("stripe_payment_id")
+  paidAt          DateTime? @map("paid_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  user            Users     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+model ChangeLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tableName String   @map("table_name")
+  recordId  String   @map("record_id") @db.Uuid
+  action    String
+  oldData   Json?    @map("old_data")
+  newData   Json?    @map("new_data")
+  changedBy String?  @map("changed_by") @db.Uuid
+  changedAt DateTime @default(now()) @map("changed_at") @db.Timestamptz(6)
+
+  @@index([tableName, recordId])
+  @@index([changedAt])
+  @@map("change_log")
+}
+
+model SavedOpportunities {
+  userId         String   @map("user_id") @db.Uuid
+  opportunityId  String   @map("opportunity_id") @db.Uuid
+  savedAt        DateTime @default(now()) @map("saved_at") @db.Timestamptz(6)
+  externalSource String   @default("default") @map("external_source")
+  user           Users    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, opportunityId])
+  @@index([userId, savedAt(sort: Desc)])
+  @@map("saved_opportunities")
+}
+
+model Notifications {
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String            @map("user_id") @db.Uuid
+  payload            Json              @default("{}")
+  readAt             DateTime?         @map("read_at") @db.Timestamptz(6)
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  notificationTypeId String            @map("notification_type_id") @db.Uuid
+  notificationType   NotificationTypes @relation(fields: [notificationTypeId], references: [id])
+  user               Users             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum GpaScale {
+  OUT_OF_100
+  OUT_OF_5
+  OUT_OF_4
+}
+
+// ============================================================================
+// PART 2: ADAPTED PERSONAL DRAFTS / EDITOR & AI MODELS
+// ============================================================================
+
+enum DraftPageStatus {
+  DRAFT
+  IN_PROGRESS
+  FINALIZED
+  ARCHIVED
+}
+
+model DraftSpaces {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug        String           @db.VarChar(255)
+  name        String           @db.VarChar(255)
+  description String?          @db.Text
+  icon        String?          @db.VarChar(100)
+  ownerId     String           @map("owner_id") @db.Uuid
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime?        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  owner       Users            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  pages       DraftPages[]
+  templates   DraftTemplates[]
+  tags        DraftTags[]
+
+  @@unique([ownerId, slug])
+  @@index([ownerId])
+  @@map("draft_spaces")
+}
+
+model DraftPages {
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  spaceId     String              @map("space_id") @db.Uuid
+  parentId    String?             @map("parent_id") @db.Uuid
+  userId      String              @map("user_id") @db.Uuid
+  documentId  String?             @map("document_id") @db.Uuid
+  title       String              @db.VarChar(500)
+  slug        String              @db.VarChar(500)
+  contentJson Json?               @map("content_json")
+  status      DraftPageStatus     @default(DRAFT)
+  position    Int                 @default(0)
+  deletedAt   DateTime?           @map("deleted_at") @db.Timestamptz(6)
+  deletedBy   String?             @map("deleted_by") @db.Uuid
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime?           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  space       DraftSpaces         @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  parent      DraftPages?         @relation("DraftPageTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children    DraftPages[]        @relation("DraftPageTree")
+  user        Users               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  document    Documents?          @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  versions    DraftPageVersions[]
+  attachments DraftAttachments[]
+  tags        DraftPageTags[]
+  // [OMA-W006-T002] Proposals relation
+  proposals   AiEditProposals[]
+
+  @@index([spaceId, deletedAt])
+  @@index([userId])
+  @@index([documentId])
+  @@index([parentId])
+  @@map("draft_pages")
+}
+
+model DraftPageVersions {
+  id                  String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pageId              String     @map("page_id") @db.Uuid
+  userId              String     @map("user_id") @db.Uuid
+  contentJson         Json       @map("content_json")
+  isFinalizedSnapshot Boolean    @default(false) @map("is_finalized_snapshot")
+  finalizedDocumentId String?    @map("finalized_document_id") @db.Uuid
+  createdAt           DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  page                DraftPages @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  user                Users      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([pageId, createdAt(sort: Desc)])
+  @@index([userId])
+  @@map("draft_page_versions")
+}
+
+model DraftAttachments {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pageId      String     @map("page_id") @db.Uuid
+  uploaderId  String     @map("uploader_id") @db.Uuid
+  filename    String     @db.VarChar(255)
+  mimeType    String     @map("mime_type") @db.VarChar(100)
+  sizeBytes   Int        @map("size_bytes")
+  storagePath String     @map("storage_path") @db.Text
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  page        DraftPages @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  uploader    Users      @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+
+  @@index([pageId])
+  @@index([uploaderId])
+  @@map("draft_attachments")
+}
+
+model DraftTags {
+  id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  spaceId   String          @map("space_id") @db.Uuid
+  name      String          @db.VarChar(100)
+  color     String?         @db.VarChar(50)
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  space     DraftSpaces     @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  pages     DraftPageTags[]
+
+  @@unique([spaceId, name])
+  @@index([spaceId])
+  @@map("draft_tags")
+}
+
+model DraftPageTags {
+  pageId String     @map("page_id") @db.Uuid
+  tagId  String     @map("tag_id") @db.Uuid
+
+  page   DraftPages @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  tag    DraftTags  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([pageId, tagId])
+  @@map("draft_page_tags")
+}
+
+model DraftTemplates {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title       String       @db.VarChar(255)
+  description String?      @db.Text
+  contentJson Json         @map("content_json")
+  category    String       @default("General") @db.VarChar(100)
+  icon        String?      @db.VarChar(100)
+  isDefault   Boolean      @default(false) @map("is_default")
+  spaceId     String?      @map("space_id") @db.Uuid
+  creatorId   String?      @map("creator_id") @db.Uuid
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime?    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  space       DraftSpaces? @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  creator     Users?       @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+
+  @@index([spaceId])
+  @@index([creatorId])
+  @@map("draft_templates")
+}
+
+model AiConversations {
+  id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String       @map("user_id") @db.Uuid
+  title     String       @default("New conversation") @db.VarChar(255)
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime?    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user              Users                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages          AiMessages[]
+  // [OMA-W006-T002] Feature 11 relations
+  messageEmbeddings AiMessageEmbeddings[]
+  proposals         AiEditProposals[]
+
+  @@index([userId, updatedAt(sort: Desc)])
+  @@map("ai_conversations")
+}
+
+model AiMessages {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String          @map("conversation_id") @db.Uuid
+  role           String          @db.VarChar(50)
+  content        String          @db.Text
+  sources        Json?
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  conversation   AiConversations @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  // [OMA-W006-T002] Feature 11 relation
+  embedding      AiMessageEmbeddings?
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
+}
+
+model AiConfigs {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider   String    @unique @db.VarChar(50)
+  apiKey     String?   @map("api_key") @db.Text
+  endpoint   String?   @db.VarChar(255)
+  model      String?   @db.VarChar(100)
+  deployment String?   @db.Text
+  apiVersion String?   @map("api_version") @db.VarChar(50)
+  isActive   Boolean   @default(false) @map("is_active")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime? @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([isActive])
+  @@map("ai_configs")
+}
+
+// [OMA-W006-T002] Feature 11: Proposal status enum and pgvector / proposal models
+enum AiEditProposalStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+
+  @@map("ai_edit_proposal_status")
+}
+
+model AiMessageEmbeddings {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  messageId      String          @unique @map("message_id") @db.Uuid
+  conversationId String          @map("conversation_id") @db.Uuid
+  userId         String          @map("user_id") @db.Uuid
+  embedding      Unsupported("vector(384)")
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  message        AiMessages      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  conversation   AiConversations @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           Users           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([userId])
+  @@map("ai_message_embeddings")
+}
+
+model AiEditProposals {
+  id             String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pageId         String               @map("page_id") @db.Uuid
+  conversationId String?              @map("conversation_id") @db.Uuid
+  userId         String               @map("user_id") @db.Uuid
+  originalText   String               @map("original_text") @db.Text
+  suggestedText  String               @map("suggested_text") @db.Text
+  explanation    String?              @db.Text
+  status         AiEditProposalStatus @default(PENDING)
+  appliedAt      DateTime?            @map("applied_at") @db.Timestamptz(6)
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  page           DraftPages           @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  conversation   AiConversations?     @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  user           Users                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([pageId])
+  @@index([userId])
+  @@index([status])
+  @@map("ai_edit_proposals")
+}
+
+// ============================================================================
+// PART 3: ENHANCED AUTH & INVITATION MODELS
+// ============================================================================
+
+model Invitations {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email       String    @db.Citext
+  tokenHash   String    @unique @map("token_hash")
+  roleId      Int?      @map("role_id")
+  invitedById String    @map("invited_by_id") @db.Uuid
+  acceptedAt  DateTime? @map("accepted_at") @db.Timestamptz(6)
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  invitedBy   Users     @relation("InvitationsSent", fields: [invitedById], references: [id], onDelete: Cascade)
+  role        Roles?    @relation(fields: [roleId], references: [id])
+
+  @@index([email])
+  @@index([tokenHash])
+  @@map("invitations")
+}
+

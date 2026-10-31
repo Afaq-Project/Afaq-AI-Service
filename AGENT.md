@@ -127,3 +127,24 @@ Tests exist to prevent regressions and verify real business behaviors. Avoid tes
 
 * **Environment Safety:**
   * **Never run `docker build` locally.** Container builds are handled exclusively by GitHub Actions CI.
+
+---
+
+## 5. Documentation & Reporting Standards
+
+* **Report Storage Location:**
+  * All technical, audit, architecture, and engineering reports must be stored within the `docs/reports/` directory of the project.
+  * Never place ad-hoc report markdown files loosely in the project root or top-level `docs/`.
+
+* **Folder Organization:**
+  * Each report or set of related reports must be placed in a dedicated subfolder that clearly identifies its purpose (e.g., `docs/reports/scraping_extraction_pipeline/`).
+  * The subfolder must contain:
+    1. The report document(s) themselves.
+    2. A metadata file (`metadata.md`) documenting essential tracking details:
+       - **Date:** (YYYY-MM-DD)
+       - **Branch:** The active git branch
+       - **Feature / Scope:** Associated feature name or ticket
+       - **Author / Context:** Brief context or author reference
+
+* **Exclusions:**
+  * `speckit` files and reports are strictly excluded from this requirement, as they are treated as separate, specialized specification and tracking artifacts.
