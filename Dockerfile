@@ -1,10 +1,13 @@
 # Stage 1: Builder
-FROM python:3.12-slim as builder
+FROM python:3.12-slim AS builder
 
-# Install build dependencies
+# Install build dependencies (Node.js & npm required by Prisma CLI)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
+    curl \
+    nodejs \
+    npm \
     openssl \
     && rm -rf /var/lib/apt/lists/*
 
