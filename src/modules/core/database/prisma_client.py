@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 
 from prisma import Prisma
 
@@ -10,7 +11,10 @@ _client: Prisma | None = None
 async def connect() -> Prisma:
     global _client
     if _client is None:
-        _client = Prisma()
+        _client = Prisma(
+            http={"timeout": 120.0},
+            connect_timeout=timedelta(seconds=60),
+        )
     if not _client.is_connected():
         await _client.connect()
         logger.info("Connected to database")
