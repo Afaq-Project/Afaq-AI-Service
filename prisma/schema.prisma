@@ -4,58 +4,209 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
+// ---------------------------------------------------------
+// 1. Administrative URL Registry
+// ---------------------------------------------------------
 model Source {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name         String   @unique @db.Text
-  display_name String   @db.Text
-  base_url     String   @db.Text
-  api_endpoint String   @default("") @db.Text
-  method       String   @default("wordpress_api") @db.Text
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  url        String   @unique @db.Text
+  name       String?  @db.Text
+  is_active  Boolean  @default(true)
+  created_by String?  @db.Text
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
-  pagination_config Json    @default("{}")
-  field_mapping     Json    @default("{}")
-  is_active         Boolean @default(true)
-  scrape_frequency  String? @default("daily")
-
-  last_scraped_at DateTime?
-  created_at      DateTime  @default(now())
-  updated_at      DateTime  @updatedAt
-
-  raw_opportunities RawOpportunity[]
+  config            SourceConfig?
+  templates         ScrapingTemplate[]
+  raw_listings      RawListing[]
+  raw_grant_details RawGrantDetail[]
   opportunities     CleanedOpportunity[]
 
   @@map("sources")
 }
 
-model RawOpportunity {
-  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  source_id   String  @map("source_id") @db.Uuid
-  source      Source  @relation(fields: [source_id], references: [id])
-  raw_payload Json    @default("{}")
-  source_url  String? @db.Text
+// ---------------------------------------------------------
+// 2. Technical Crawling & Discovery Settings
+// ---------------------------------------------------------
+model SourceConfig {
+  id                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  source_id                   String    @unique @map("source_id") @db.Uuid
+  source                      Source    @relation(fields: [source_id], references: [id], onDelete: Cascade)
+  domain                      String    @db.Text
+  site_name                   String    @db.Text
+  site_description            String?   @db.Text
+  supported_languages         String[]  @default([])
+  language_switch_type        String?   @db.Text
+  pagination_type             String    @default("next_button") @db.Text
+  pagination_config           Json      @default("{}")
+  wait_for_selector           String?   @db.Text
+  page_timeout_sec            Int       @default(30)
+  max_operation_timeout_sec   Int       @default(1200)
+  max_pages_per_run           Int       @default(10)
+  max_concurrent_crawls       Int       @default(1)
+  rate_limit_delay_sec        Float     @default(1.0)
+  cool_down_until             DateTime?
+  robots_txt_sitemaps         String[]  @default([])
+  ordering_strategy           String    @default("chronological_descending") @db.Text
+  incremental_cutoff_enabled  Boolean   @default(true)
+  is_locked                   Boolean   @default(false)
+  locked_at                   DateTime?
+  has_multi_tab_details       Boolean   @default(false)
+  tab_container_selector      String?   @db.Text
+  has_multi_page_details      Boolean   @default(false)
+  subpage_pagination_selector String?   @db.Text
+  drift_detected              Boolean   @default(false)
+  consecutive_failures        Int       @default(0)
+  last_scraped_at             DateTime?
+  created_at                  DateTime  @default(now())
+  updated_at                  DateTime  @updatedAt
 
-  scraped_at    DateTime @default(now())
-  status        String   @default("pending")
-  error_message String?
-  created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
-
-  cleaned_opportunity CleanedOpportunity?
-
-  @@map("raw_opportunities")
+  @@map("source_configs")
 }
 
-model CleanedOpportunity {
-  id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  raw_opportunity_id String         @unique @map("raw_opportunity_id") @db.Uuid
-  raw_opportunity    RawOpportunity @relation(fields: [raw_opportunity_id], references: [id])
+// ---------------------------------------------------------
+// 3. Multi-Template Pool & History
+// ---------------------------------------------------------
+model ScrapingTemplate {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  source_id              String    @map("source_id") @db.Uuid
+  source                 Source    @relation(fields: [source_id], references: [id], onDelete: Cascade)
+  level                  Int // 1 = Catalog / Listing, 2 = Detail Page
+  layout_signature       String    @db.Text
+  schema_type            String    @default("CSS") @db.Text
+  template_schema        Json      @default("{}")
+  version                Int       @default(1)
+  is_active              Boolean   @default(true)
+  hit_count              Int       @default(0)
+  field_metrics          Json?
+  last_successful_use_at DateTime?
+  created_at             DateTime  @default(now())
+  updated_at             DateTime  @updatedAt
 
-  source_id String? @map("source_id") @db.Uuid
-  source    Source? @relation(fields: [source_id], references: [id])
+  raw_grant_details RawGrantDetail[]
+
+  @@unique([source_id, level, version], name: "unique_source_level_version")
+  @@index([source_id, level, is_active])
+  @@map("scraping_templates")
+}
+
+// ---------------------------------------------------------
+// 4. Job Telemetry & Reports
+// ---------------------------------------------------------
+model ScrapeOperation {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  idempotency_key         String?   @unique @db.Text
+  status                  String    @default("running") @db.Text
+  triggered_by            String    @default("cron") @db.Text
+  sources_attempted       String[]  @default([])
+  sources_succeeded       String[]  @default([])
+  sources_failed          String[]  @default([])
+  total_listings_found    Int       @default(0)
+  total_details_extracted Int       @default(0)
+  total_files_downloaded  Int       @default(0)
+  error_summary           Json      @default("{}")
+  started_at              DateTime  @default(now())
+  completed_at            DateTime?
+
+  raw_listings      RawListing[]
+  raw_grant_details RawGrantDetail[]
+
+  @@map("scrape_operations")
+}
+
+// ---------------------------------------------------------
+// 5. Level 1 Catalog Extraction & Multi-Page Tree
+// ---------------------------------------------------------
+model RawListing {
+  id                   String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  operation_id         String          @map("operation_id") @db.Uuid
+  operation            ScrapeOperation @relation(fields: [operation_id], references: [id], onDelete: Cascade)
+  source_id            String          @map("source_id") @db.Uuid
+  source               Source          @relation(fields: [source_id], references: [id], onDelete: Cascade)
+  parent_id            String?         @map("parent_id") @db.Uuid
+  parent               RawListing?     @relation("ListingHierarchy", fields: [parent_id], references: [id], onDelete: SetNull)
+  children             RawListing[]    @relation("ListingHierarchy")
+  root_listing_id      String?         @map("root_listing_id") @db.Uuid
+  page_number          Int             @default(1)
+  tree_depth           Int             @default(0)
+  discovered_url       String          @db.Text
+  card_title_preview   String?         @db.Text
+  card_snippet_preview String?         @db.Text
+  card_image_url       String?         @db.Text
+  listing_page_url     String          @db.Text
+  status               String          @default("pending_detail_crawl") @db.Text
+  retry_count          Int             @default(0)
+  max_retries          Int             @default(3)
+  extraction_errors    Json?
+  scraped_at           DateTime        @default(now())
+  created_at           DateTime        @default(now())
+
+  raw_grant_details RawGrantDetail[]
+
+  @@unique([source_id, discovered_url], name: "unique_source_discovered_url")
+  @@index([operation_id])
+  @@index([source_id, status])
+  @@index([root_listing_id])
+  @@map("raw_listings")
+}
+
+// ---------------------------------------------------------
+// 6. Level 2 Comprehensive Extraction
+// ---------------------------------------------------------
+model RawGrantDetail {
+  id                       String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listing_id               String?           @map("listing_id") @db.Uuid
+  listing                  RawListing?       @relation(fields: [listing_id], references: [id], onDelete: SetNull)
+  opportunity_group_id     String?           @map("opportunity_group_id") @db.Uuid
+  operation_id             String            @map("operation_id") @db.Uuid
+  operation                ScrapeOperation   @relation(fields: [operation_id], references: [id], onDelete: Cascade)
+  source_id                String            @map("source_id") @db.Uuid
+  source                   Source            @relation(fields: [source_id], references: [id], onDelete: Cascade)
+  template_id              String?           @map("template_id") @db.Uuid
+  template                 ScrapingTemplate? @relation(fields: [template_id], references: [id], onDelete: SetNull)
+  source_url               String            @db.Text
+  template_version         Int               @default(1)
+  raw_payload              Json              @default("{}")
+  image_url                String?           @db.Text
+  title_language           String            @default("und") @db.Text
+  body_language            String            @default("und") @db.Text
+  language_confidence      Float             @default(0.0)
+  link_verification_status String            @default("unverified") @db.Text
+  final_application_url    String?           @db.Text
+  is_legitimate_domain     Boolean?
+  has_attachment           Boolean           @default(false)
+  attachment_s3_key        String?           @db.Text
+  attachment_metadata      Json?
+  status                   String            @default("pending") @db.Text
+  retry_count              Int               @default(0)
+  max_retries              Int               @default(3)
+  extraction_errors        Json?
+  error_message            String?           @db.Text
+  scraped_at               DateTime          @default(now())
+  created_at               DateTime          @default(now())
+
+  cleaned_opportunities CleanedOpportunity[]
+
+  @@index([opportunity_group_id])
+  @@index([source_id, status])
+  @@index([operation_id])
+  @@map("raw_grant_details")
+}
+
+// ---------------------------------------------------------
+// 7. Canonical Cleaned Opportunities (for Matching & Downstream)
+// ---------------------------------------------------------
+model CleanedOpportunity {
+  id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  raw_grant_detail_id String?         @map("raw_grant_detail_id") @db.Uuid
+  raw_grant_detail    RawGrantDetail? @relation(fields: [raw_grant_detail_id], references: [id], onDelete: SetNull)
+  source_id           String?         @map("source_id") @db.Uuid
+  source              Source?         @relation(fields: [source_id], references: [id], onDelete: SetNull)
 
   title            String    @db.Text
   organization     String?   @db.Text
@@ -79,17 +230,19 @@ model CleanedOpportunity {
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
-  match_scores  MatchScore[]
-  conversations Conversation[]
+  match_scores MatchScore[]
 
   @@map("cleaned_opportunities")
 }
 
+// ---------------------------------------------------------
+// 8. User Match Scores
+// ---------------------------------------------------------
 model MatchScore {
   id                  String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   user_id             String             @db.Uuid
   opportunity_id      String             @map("opportunity_id") @db.Uuid
-  opportunity         CleanedOpportunity @relation(fields: [opportunity_id], references: [id])
+  opportunity         CleanedOpportunity @relation(fields: [opportunity_id], references: [id], onDelete: Cascade)
   score_pct           Int
   score_breakdown     Json               @default("{}")
   calculation_version Int                @default(1)
@@ -101,42 +254,9 @@ model MatchScore {
   @@map("match_scores")
 }
 
-model Conversation {
-  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id        String             @db.Uuid
-  opportunity_id String             @map("opportunity_id") @db.Uuid
-  opportunity    CleanedOpportunity @relation(fields: [opportunity_id], references: [id])
-  application_id String?            @db.Uuid
-
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
-
-  messages ConversationMessage[]
-
-  @@index([user_id, opportunity_id])
-  @@map("conversations")
-}
-
-model ConversationMessage {
-  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  conversation_id String       @map("conversation_id") @db.Uuid
-  conversation    Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
-
-  role           String  @db.Text
-  content        String  @db.Text
-  status         String  @default("ok") @db.Text
-  decline_reason String? @db.Text
-  model          String? @db.Text
-  input_tokens   Int?
-  output_tokens  Int?
-  latency_ms     Int?
-
-  created_at DateTime @default(now())
-
-  @@index([conversation_id, created_at])
-  @@map("conversation_messages")
-}
-
+// ---------------------------------------------------------
+// 9. API Authentication Keys
+// ---------------------------------------------------------
 model ApiKey {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   key          String    @unique @db.Text

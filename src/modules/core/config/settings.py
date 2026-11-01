@@ -25,15 +25,25 @@ class Settings(BaseSettings):
     matching_webhook_secret: str = ""
     webhook_timeout: float = 15.0
 
-    anthropic_api_key: str = ""
+    # AI & LLM settings (for Stage 0 Discovery & Stage 1 Schema Synthesis)
     google_api_key: str = ""
-    ai_model: str = "claude-opus-5"
-    ai_timeout_seconds: float = 120.0
-    ai_max_retries: int = 1
-    ai_chat_max_tokens: int = 4096
-    ai_review_max_tokens: int = 8192
-    ai_history_limit: int = 20
-    ai_refusal_fallbacks: bool = True
+    anthropic_api_key: str = ""
+    ai_model: str = "gemini-2.0-flash"
+    ai_timeout_seconds: float = 60.0
+    ai_max_retries: int = 2
+
+    # Crawling & Browser settings (Ultra-low memory container constraints)
+    crawler_max_concurrent_crawls: int = 1
+    crawler_page_timeout_sec: int = 30
+    crawler_max_operation_timeout_sec: int = 1200
+    crawler_default_rate_limit_delay_sec: float = 1.0
+
+    # S3 Storage settings for document & application attachments
+    s3_attachments_bucket: str = "afaq-attachments"
+    aws_region: str = "us-east-1"
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_s3_endpoint_url: str = ""
 
 
 @lru_cache
