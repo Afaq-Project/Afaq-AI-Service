@@ -8,6 +8,15 @@
 
 ---
 
+## Clarifications
+
+### Session 2026-11-01
+- Q: Should the LinkValidator accept an optional base URL to automatically resolve relative paths into canonical absolute URLs, or should it require callers to provide pre-resolved absolute URLs? → A: Option A: Accept an optional `base_url` parameter; if provided and `raw_url` is relative, resolve it canonically via RFC 3986 relative reference resolution before validating; if omitted and `raw_url` is relative, reject with `ERR_INVALID_SCHEME`.
+- Q: When the content sanitizer detects high-confidence prompt injection trigger phrases in scraped web content, should the pipeline immediately abort the listing extraction with an error, or should it neutralize the phrases and continue extraction with an audit flag? → A: Option A: Neutralize & Flag (Resilient Extraction): Redact or defang high-confidence trigger patterns (e.g., `[REDACTED_SUSPICIOUS_PROMPT]`), set `is_suspicious_prompt=True` in validation metadata, and continue extraction safely inside the XML prompt barrier.
+- Q: How should the FileValidator generate the S3 object key when a downloadable document's URL path lacks a recognizable filename or uses dynamic query parameters (e.g., `/download.php?id=9481`)? → A: Option A: Content-Disposition with Hash Fallback: Sanitize filename from `Content-Disposition` header; if missing, fall back to `{sha256[:16]}.{detected_ext}` based on verified magic bytes.
+
+---
+
 ## 1. User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Safe External URL Inspection & Anti-SSRF Defense (Priority: P1)
@@ -103,11 +112,14 @@ So that corrupt schemas or complex nested selectors cannot stall or freeze crawl
 * **FR-013**: System MUST stream-download attachments with a strict 25 MB ceiling, aborting downloads exceeding this limit with `ERR_FILE_SIZE_EXCEEDED`.
 * **FR-014**: System MUST verify true binary magic bytes for allowed attachment types (PDF `%PDF-`, DOCX/XLSX `PK\x03\x04`, JPEG, PNG, WEBP) and unconditionally reject executable signatures (PE `MZ`, ELF, shell scripts).
 * **FR-015**: System MUST inspect zip-based archives without full decompression, enforcing a 100:1 compression ratio cap and a 50 MB total uncompressed size limit (`ERR_ZIP_BOMB_DETECTED`).
+* **FR-016**: System MUST accept an optional `base_url` parameter in URL validation; if provided and the target URL is a relative reference, resolve it canonically using RFC 3986 reference resolution before security inspection. If omitted and the target URL is relative, reject immediately with `ERR_INVALID_SCHEME`.
+* **FR-017**: System MUST scan untrusted web content for high-confidence prompt injection trigger patterns; when detected, defang/neutralize the matched phrase (replacing with `[REDACTED_SUSPICIOUS_PROMPT]`), flag `is_suspicious_prompt=True` on the `SanitizedContent` metadata, and record audit telemetry without dropping the listing extraction.
+* **FR-018**: System MUST derive the suggested S3 object key by sanitizing the filename extracted from the URL path or HTTP `Content-Disposition` header; if neither is present or valid, fall back deterministically to `{sha256[:16]}.{detected_ext}` based on verified magic bytes.
 
 ### Key Entities
 
 * **ValidatedUrl**: Represents an immutable, thoroughly verified URL containing `original_url`, `canonical_url`, `scheme`, `host`, `port`, `resolved_ip`, `dns_pinned_rule`, and `redirect_history`.
-* **SanitizedContent**: Output envelope containing cleaned plain text or sanitized HTML, stripping metadata, original character count, cleaned character count, and flags for detected/removed threats.
+* **SanitizedContent**: Output envelope containing cleaned plain text or sanitized HTML, stripping metadata, original character count, cleaned character count, `is_suspicious_prompt` boolean flag, and a list of detected/redacted prompt injection phrases.
 * **FileValidationResult**: Result of attachment inspection containing `is_valid`, `mime_type`, `magic_bytes_detected`, `file_size_bytes`, `sha256_checksum`, `safe_s3_key`, and optional `rejection_reason`.
 * **TemplateSchemaValidationResult**: Outcome of extraction schema validation containing `is_valid`, `validated_schema`, `selector_count`, `dry_run_latency_ms`, and `rejection_reason`.
 
