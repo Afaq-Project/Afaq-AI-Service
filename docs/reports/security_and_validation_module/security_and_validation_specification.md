@@ -99,7 +99,12 @@ Validated Safe URL Object
   * **Broadcast / Multicast:** `224.0.0.0/4`, `ff00::/8`
   * **Carrier-Grade NAT:** `100.64.0.0/10`
 * Rejection Code: `ERR_SSRF_ATTEMPT_BLOCKED`.
-* **DNS Rebinding Protection:** The resolved, verified IP address is cached with a strict TTL or pinned to the underlying connection pool to prevent Time-of-Check to Time-of-Use (TOCTOU) DNS rebinding attacks.
+* **DNS Rebinding Protection & Chromium Pinning:**
+  * To prevent Time-of-Check to Time-of-Use (TOCTOU) DNS rebinding attacks, the verified IP is passed to Playwright/Crawl4AI via Chromium's native command-line argument:
+    ```python
+    extra_args = [f'--host-resolver-rules=MAP {validated_url.host} {validated_url.resolved_ip}']
+    ```
+  * This guarantees that Chromium bypasses its internal DNS resolver entirely and establishes its TCP connection strictly with the pre-screened public IP.
 
 #### F. Circular & Multiple Redirect Detection
 * Safe redirect inspector traverses HTTP `HEAD` / `GET` redirects asynchronously up to a strict maximum of **5 hops**.
@@ -107,6 +112,15 @@ Validated Safe URL Object
 * If a hop encounters a previously visited URL $\rightarrow$ terminates with `ERR_CIRCULAR_REDIRECT`.
 * If redirect chain exceeds 5 hops $\rightarrow$ terminates with `ERR_MAX_REDIRECTS_EXCEEDED`.
 * **Redirect SSRF Re-Check:** Each hop's target URL is fully re-validated against the Anti-SSRF filter. A public URL redirecting to an internal IP (e.g., `https://evil.com/` $\rightarrow$ `http://169.254.169.254/`) is intercepted and blocked before the hop is performed.
+
+#### G. HTTP 429 & 503 Rate Limiting (`Retry-After` Adherence)
+* Intercepts `HTTP 429 Too Many Requests` and `HTTP 503 Service Unavailable` responses.
+* **Header Parsing:** Evaluates the `Retry-After` header supporting both delta-seconds (e.g., `Retry-After: 120`) and RFC 7231 dates (e.g., `Retry-After: Fri, 31 Dec 2026 23:59:59 GMT`).
+* **Threshold Handling:**
+  * If requested wait $> 300$ seconds: sets `source_configs.cool_down_until = NOW() + backoff_seconds`, halts crawling for that source immediately with `ERR_RATE_LIMITED_COOLDOWN`, and releases the distributed lock.
+  * If requested wait $\le 300$ seconds: the crawler pauses for the requested duration and retries once.
+* **Fallback Jittered Backoff:** If HTTP 429 is received without a `Retry-After` header, applies exponential backoff with full jitter:
+  $$\text{delay} = \min(60, 2^{\text{attempt}} + \text{random}(0, 1))$$
 
 ---
 
@@ -242,6 +256,9 @@ All exceptions raised by the security module inherit from `SecurityValidationErr
 | `ERR_INVALID_IMAGE_TYPE` | Media Safety | Image URL points to unsupported format, SVG script, or data URI. |
 | `ERR_PROMPT_INJECTION_DETECTED`| AI Safety | Input content triggered high-confidence prompt injection heuristics. |
 | `ERR_INVALID_TEMPLATE_SCHEMA` | Schema Safety | AI-generated extraction template contains illegal or dangerous selector constructs. |
+| `ERR_SOURCE_ALREADY_LOCKED` | Concurrency Control | Source is currently locked and being scraped by another active operation. |
+| `ERR_OPERATION_TIMEOUT` | Operational Ceiling | Entire scrape operation exceeded the hard execution ceiling (default: 20 min). |
+| `ERR_RATE_LIMITED_COOLDOWN` | Rate Limiting | Host returned HTTP 429 with high Retry-After; source placed into cool-down. |
 
 ---
 

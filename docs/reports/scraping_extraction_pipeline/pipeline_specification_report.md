@@ -52,8 +52,15 @@ Populated and maintained autonomously by the engine:
 * `pagination_type: String` — `next_button`, `url_param`, `infinite_scroll`, `none`.
 * `pagination_config: Json` — Specific rules (e.g., parameter name, base selector, page limit).
 * `wait_for_selector: String?` — Specific DOM element Crawl4AI waits for before parsing.
-* `page_timeout_sec: Int` — Max navigation timeout (default: 30s).
+* `page_timeout_sec: Int` — Max navigation timeout per page (default: 30s).
+* `max_operation_timeout_sec: Int` — Max execution ceiling for entire scrape operation per source (default: 1200s / 20 min).
 * `max_pages_per_run: Int` — Max listing pages to traverse per job (default: 10).
+* `max_concurrent_crawls: Int` — Max concurrent browser tabs (default: `1` for strictly bounded single-process memory footprint; configurable for future horizontal scaling).
+* `rate_limit_delay_sec: Float` — Default `1.0`. Inter-request delay (populated from `robots.txt` `Crawl-delay` if present).
+* `cool_down_until: DateTime?` — Timestamp populated when HTTP 429 (`Retry-After`) is received; skips crawling until expiration.
+* `robots_txt_sitemaps: String[]` — Discovered XML sitemap URLs extracted from `robots.txt` during Stage 0.
+* `is_locked: Boolean` — Default `false`. Distributed lock preventing duplicate concurrent runs on the same source.
+* `locked_at: DateTime?` — Lock timestamp (auto-expires after 30 minutes to prevent deadlocks).
 * `has_multi_tab_details: Boolean` — Default `false`. Discovered in Stage 0 if detail pages use tabs.
 * `tab_container_selector: String?` — Discovered selector for tab headers (e.g. `.nav-tabs a`).
 * `has_multi_page_details: Boolean` — Default `false`. Discovered if detail articles span sub-pages.
@@ -83,7 +90,8 @@ Stores multiple extraction schemas per source to handle layout rotation without 
 ### 2.4. `scrape_operations` (Job Telemetry & Reports)
 Audit logs and operational reports for each scrape execution:
 * `id: UUID (PK)` — The `operation_id` generated per execution.
-* `status: String` — `running`, `completed`, `failed`, `partial`.
+* `idempotency_key: String? (Unique)` — Optional UUID from `Idempotency-Key` header to safely deduplicate retried trigger requests.
+* `status: String` — `running`, `completed`, `failed`, `partial`, `timed_out`.
 * `triggered_by: String` — `cron`, `admin_api`, `manual_retry`.
 * `sources_attempted: String[]`
 * `sources_succeeded: String[]`
@@ -95,17 +103,24 @@ Audit logs and operational reports for each scrape execution:
 * `started_at: DateTime`
 * `completed_at: DateTime?`
 
-### 2.5. `raw_listings` (Level 1 Catalog Extraction)
-Records discovered scholarship cards from catalog pages:
+### 2.5. `raw_listings` (Level 1 Catalog Extraction & Multi-Page Tree)
+Records discovered scholarship cards from catalog pages and tracks multi-page article lineage:
 * `id: UUID (PK)`
 * `operation_id: UUID (FK)` — References `scrape_operations.id`.
 * `source_id: UUID (FK)` — References `sources.id`.
+* `parent_id: UUID? (Self-FK)` — References parent listing ID for multi-page articles (Tree lineage).
+* `root_listing_id: UUID?` — Root page ID of the multi-page article tree for rapid indexing.
+* `page_number: Int` — Default `1`. Sequential page number in a multi-page article hierarchy.
+* `tree_depth: Int` — Default `0`. Hierarchical depth in the multi-page tree.
 * `discovered_url: String` — Direct link to the opportunity detail page.
 * `card_title_preview: String?` — Title snippet from the catalog card.
 * `card_snippet_preview: String?`
 * `card_image_url: String?` — Discovered card thumbnail image URL.
 * `listing_page_url: String` — Paginated URL where this card was discovered.
-* `status: String` — `pending_detail_crawl`, `details_extracted`, `failed`.
+* `status: String` — `pending_detail_crawl`, `details_extracted`, `failed`, `failed_permanently`.
+* `retry_count: Int` — Default `0`. Number of failed extraction attempts.
+* `max_retries: Int` — Default `3`. Threshold before routing to `failed_permanently` (Database DLQ).
+* `extraction_errors: Json?` — Audit logs of extraction failures and stack traces.
 * `scraped_at: DateTime`
 * `created_at: DateTime`
 * `CONSTRAINT unique_source_discovered_url UNIQUE (source_id, discovered_url)`
@@ -129,7 +144,10 @@ Stores complete, uncleaned scholarship data and verification results:
 * `has_attachment: Boolean` — Default `false`.
 * `attachment_s3_key: String?` — S3 object key (`s3://afaq-attachments/...`).
 * `attachment_metadata: Json?` — File size, mime-type, SHA256 checksum.
-* `status: String` — `pending` (ready for downstream cleaning), `processing`, `cleaned`, `failed`.
+* `status: String` — `pending` (ready for downstream cleaning), `processing`, `cleaned`, `failed`, `failed_permanently`.
+* `retry_count: Int` — Default `0`.
+* `max_retries: Int` — Default `3`. Threshold before dead-lettering to `failed_permanently`.
+* `extraction_errors: Json?` — Detailed error history.
 * `error_message: String?`
 * `scraped_at: DateTime`
 * `created_at: DateTime`
@@ -187,44 +205,72 @@ When an administrator registers a target URL in `sources`, Stage 0 autonomously 
    * Performs an async `HEAD`/`GET` reachability check (traversing up to 5 hops with circular redirect trapping via `ERR_CIRCULAR_REDIRECT`).
    * Asserts destination returns `HTTP 200 OK` with a valid SSL certificate.
    * Intercepts DNS failures (`NXDOMAIN`), connection timeouts, or registrar/parking splash pages before invoking the browser or AI.
-2. **Stealth Entry Crawl via Crawl4AI:**
+2. **`robots.txt` Hybrid Inspection & Discovery:**
+   * Fetches target `/robots.txt` asynchronously:
+     * **Crawl-delay Extraction:** Reads `Crawl-delay: <sec>` and sets `source_configs.rate_limit_delay_sec` accordingly to preserve host politeness.
+     * **Sitemap Extraction:** Discovers declared `Sitemap: <url>` directives, storing them in `source_configs.robots_txt_sitemaps` to accelerate catalog discovery.
+     * **Disallow Rule Bypass Policy:** Even if `robots.txt` specifies `Disallow: /`, the engine intentionally bypasses the disallow restriction and proceeds with public catalog extraction.
+3. **Stealth Entry Crawl via Crawl4AI & DNS Pinning:**
+   * Launches headless Chromium passing `--host-resolver-rules="MAP {domain} {resolved_ip}"` to bind hostname resolution strictly to the pre-validated public IP, neutralizing DNS rebinding attacks.
    * Fetches the entry URL using `crawl4ai.AsyncWebCrawler` with headless Chromium in stealth mode to bypass anti-bot hurdles and render client-side JavaScript.
-3. **DOM Skeletonization & Pruning (Token Minimization):**
+4. **DOM Skeletonization & Pruning (Token Minimization):**
    * Aggressively strips scripts, styles, SVGs, inlines, tracking tags, and hidden elements.
    * Collapses repetitive card siblings (keeps 2 sample cards, drops remaining).
    * Truncates body paragraphs while strictly preserving navigation menus, tabs, links with anchor text, language switchers, and pagination controls.
    * Compresses 1.5MB raw HTML to 3KB–8KB (~800–1,800 tokens).
-4. **AI Platform Analysis & Prompt Shielding:**
+5. **AI Platform Analysis & Prompt Shielding:**
    * **Prompt Injection Shielding:** Pruned DOM is wrapped inside `<untrusted_web_content>` isolation boundaries via `ContentSanitizer.wrap_untrusted_prompt()` before transmission to Gemini Flash.
    * **Relevance First:** Enforces a strict prompt gate. If the site is unrelated, an ad-farm, or not an opportunity portal, Gemini returns `ERR_NOT_OPPORTUNITY_PORTAL` and halts.
    * Deduces official `site_name` and `site_description`.
    * Discovers where grants actually reside (`catalog_url`) and identifies supported languages (`supported_languages: ["ar", "en"]`).
-5. **Conditional 2nd-Hop Crawl:**
+6. **Conditional 2nd-Hop Crawl:**
    * If the entry URL was a root homepage, validates the discovered `catalog_url` via `LinkValidator`, then performs exactly one follow-up crawl to inspect and lock in the catalog pagination mechanics (`pagination_type` and `pagination_config`).
    * Hard limit: maximum 2 crawls total for the entire onboarding stage.
-6. **Populating `source_configs`:**
+7. **Populating `source_configs`:**
    * Persists all technical settings into `source_configs` and activates `sources.is_active = true`, leaving the source fully prepared for subsequent extraction phases.
 
 ---
 
 ### Stage 1: Batch Operation Initialization
 1. Initiated via `POST /api/v1/scrape/run` (with optional `source_ids: list[str]`).
-2. Generates a distinct `operation_id = uuid4()`.
-3. Queries eligible sources: `WHERE is_active = true`.
-4. Creates an entry in `scrape_operations` with `status = "running"`.
-5. Returns `HTTP 202 Accepted` immediately with operation metadata.
-6. Enqueues the asynchronous orchestrator in FastAPI `BackgroundTasks`.
+2. **Idempotency Gate:** Checks for optional `Idempotency-Key` HTTP header. If a previous operation with this key was recorded within 15 minutes, returns the existing `operation_id` immediately with `HTTP 200 OK`, preventing duplicate runs.
+3. Generates a distinct `operation_id = uuid4()`.
+4. Queries eligible sources: `WHERE is_active = true`.
+5. **Distributed Source Locking:**
+   * Executes an atomic check-and-set query against `source_configs`:
+     ```sql
+     UPDATE source_configs 
+     SET is_locked = true, locked_at = NOW() 
+     WHERE source_id = :source_id AND (is_locked = false OR locked_at < NOW() - INTERVAL '30 minutes')
+     RETURNING id;
+     ```
+   * If zero rows returned, skips that source with `ERR_SOURCE_ALREADY_LOCKED` to eliminate race conditions between scheduled and manual runs.
+6. Creates an entry in `scrape_operations` with `status = "running"`.
+7. Returns `HTTP 202 Accepted` immediately with operation metadata.
+8. Enqueues the asynchronous orchestrator in FastAPI `BackgroundTasks`.
 
 ---
 
-### Stage 2: Crawl4AI Core Crawling & Anti-Bot Defense
-1. **Browser Execution:**
-   * Managed via `crawl4ai.AsyncWebCrawler` using headless Chromium.
-   * Stealth parameters enabled to bypass Cloudflare and standard bot challenges.
-2. **Politeness & Rate-Limiting:**
-   * Implements random jitter delays (2.0s to 4.5s) between consecutive requests to the same domain.
-   * Rotates standard modern desktop User-Agents.
-3. **Target Domain Verification:**
+### Stage 2: Crawl4AI Core Crawling, Single-Browser Execution & Anti-Bot Defense
+1. **Single-Browser Memory Footprint (Backpressure Control):**
+   * To prevent memory bloat and Linux OOM kills, the scraper runs a **strictly bounded single browser process** (`max_concurrent_crawls = 1` by default).
+   * Multi-page and detail crawls are executed sequentially per worker.
+   * Configurable via `source_configs.max_concurrent_crawls` to allow horizontal expansion in future environments with higher RAM allocation.
+2. **Anti-SSRF DNS Pinning:**
+   * Browser instance launched with `--host-resolver-rules="MAP {domain} {resolved_ip}"` ensuring direct socket connection to the pre-validated public IP.
+3. **HTTP 429 & Rate Limit Backoff (`Retry-After` Adherence):**
+   * Inspects HTTP response headers on 429 and 503 responses:
+     * If `Retry-After` header present (seconds or RFC 7231 date):
+       * If delay $> 300$ seconds: sets `source_configs.cool_down_until = NOW() + delay`, aborts the current source run cleanly (`ERR_RATE_LIMITED_COOLDOWN`), and releases the source lock.
+       * If delay $\le 300$ seconds: sleeps for the specified duration and retries.
+     * If 429 received without `Retry-After`: applies exponential backoff with full jitter ($2s, 4s, 8s, 16s$ up to $60s$).
+4. **Operation-Level Hard Timeout Ceiling:**
+   * Entire source scrape wrapped in `asyncio.wait_for(..., timeout=source_configs.max_operation_timeout_sec)`.
+   * Hard ceiling defaults to **20 minutes (1200s)**. If breached, the job aborts cleanly, resets `is_locked = false`, and records `status = "timed_out"` with error code `ERR_OPERATION_TIMEOUT`.
+5. **Politeness & Rate-Limiting:**
+   * Applies `source_configs.rate_limit_delay_sec` (minimum 1.0s, or extracted `robots.txt` delay) plus random jitter between requests.
+   * Rotates modern desktop User-Agents.
+6. **Target Domain Verification:**
    * Confirms the retrieved page URL matches the target domain (detecting unwanted redirects to parking domains or captive portals).
 
 ---
@@ -294,7 +340,12 @@ Triggered only when no existing template in the pool matches the current layout:
 For each newly discovered `raw_listing`:
 1. Validates `raw_listing.discovered_url` via `LinkValidator.validate_url()`, then navigates via Crawl4AI.
 2. If `source_configs.has_multi_tab_details == true`, executes pre-extraction JS unhiding all `.tab-pane` and `[role="tabpanel"]` elements.
-3. If `source_configs.has_multi_page_details == true`, traverses and concatenates sub-pages before parsing.
+3. **Multi-Page Detail Article Tree Lineage (`has_multi_page_details == true`):**
+   * If a single scholarship spans across sub-pages (e.g. `/scholarship/`, `/scholarship/2/`, `/scholarship/3/`):
+     * A tree-based hierarchy is constructed in `raw_listings`:
+       * The initial entry page is recorded as the root node (`root_listing_id = id`, `parent_id = NULL`, `page_number = 1`, `tree_depth = 0`).
+       * Sub-pages are crawled sequentially (single-browser context) and saved as child records linking back: `parent_id = parent_listing_id`, `root_listing_id = root_listing_id`, `page_number = N`, `tree_depth = depth`.
+     * The crawler concatenates article body nodes into a complete unified virtual DOM before parsing, guaranteeing zero loss of section details while preserving complete source origin provenance.
 4. Extracts comprehensive fields and `image_url` using the active/matched Level 2 template.
    * **Structured Fields Sanitization:** All single-value attributes (title, provider, stipend, country, degree levels, deadlines) are processed through `ContentSanitizer.to_clean_text()`, enforcing 100% plain text.
    * **Rich Description Sanitization:** Detailed description bodies are sanitized via `ContentSanitizer.sanitize_html()` (powered by Rust `nh3`), purging all scripts, iframes, inline event handlers, and data URIs.
@@ -323,12 +374,17 @@ For each newly discovered `raw_listing`:
 
 ---
 
-### Stage 7: Downstream Handoff & Operation Telemetry
-1. Inserts the extracted record into `raw_grant_details` with `status = "pending"`.
-2. Updates `raw_listings.status = "details_extracted"`.
-3. **Batch Wrap-Up:**
-   * Once all sources complete, updates `scrape_operations`:
-     * `status = "completed"` (or `"partial"` if any source failed).
+### Stage 7: Downstream Handoff, Dead Letter Queue (DLQ) & Telemetry
+1. **Database-Backed Dead Letter Queue (DLQ):**
+   * If extraction succeeds: inserts into `raw_grant_details` with `status = "pending"` and updates `raw_listings.status = "details_extracted"`.
+   * If extraction fails:
+     * Increments `retry_count` on `raw_listings`.
+     * If `retry_count < max_retries (3)`: sets `status = "failed"`, leaving it eligible for retry.
+     * If `retry_count >= max_retries`: sets `status = "failed_permanently"` and persists the full stack trace into `extraction_errors`. These records are isolated as dead-lettered items for administrative audit (`GET /api/v1/scrape/dead-letter`).
+2. **Batch Wrap-Up & Lock Release:**
+   * Once all sources complete (or timeout), releases the distributed source lock (`UPDATE source_configs SET is_locked = false`).
+   * Updates `scrape_operations`:
+     * `status = "completed"` (or `"partial"` / `"timed_out"`).
      * Compiles `total_listings_found`, `total_details_extracted`, `total_files_downloaded`.
      * Writes `error_summary`.
    * Dispatches the completion webhook payload to the primary backend.

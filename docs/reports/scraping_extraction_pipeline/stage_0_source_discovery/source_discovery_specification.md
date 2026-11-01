@@ -63,14 +63,19 @@ Before initializing browser drivers or passing content to LLMs, the system passe
    * Ensures no intermediate redirect points to private/internal IPs.
    * Destination must return `HTTP 200 OK` with a valid, unexpired SSL certificate.
    * Total network timeout is capped at 10 seconds.
-5. **Dead Domain & Parking Page Traps:**
+5. **`robots.txt` Hybrid Inspection & Discovery:**
+   * Automatically requests `/robots.txt` on the target host:
+     * **Crawl-delay:** Parses `Crawl-delay: <sec>` and persists to `source_configs.rate_limit_delay_sec` to respect target server capacity.
+     * **Sitemap Extraction:** Parses `Sitemap: <url>` declarations to save discovered XML sitemaps into `source_configs.robots_txt_sitemaps`.
+     * **Disallow Bypass Policy:** Even if `robots.txt` specifies `Disallow: /`, the engine intentionally bypasses the disallow directive and continues onboarding public scholarship content.
+6. **Dead Domain & Parking Page Traps:**
    * Identifies DNS resolution failures (`NXDOMAIN`).
    * Intercepts parked domain signatures, domain-for-sale splash screens, or default web server screens (e.g. "Apache2 Default Page", "cPanel Default Page").
-6. **Immediate Exit:** If unreachable, invalid, or flagged as dead/dangerous, sets `sources.is_active = false`, logs `last_error = error_code` (e.g., `"ERR_SSRF_ATTEMPT_BLOCKED"`, `"ERR_URL_UNREACHABLE"`), and stops immediately without consuming browser or AI compute.
+7. **Immediate Exit:** If unreachable, invalid, or flagged as dead/dangerous, sets `sources.is_active = false`, logs `last_error = error_code` (e.g., `"ERR_SSRF_ATTEMPT_BLOCKED"`, `"ERR_URL_UNREACHABLE"`), and stops immediately without consuming browser or AI compute.
 
-### Step 2: Crawl4AI Entry Crawl & Anti-Bot Defense
+### Step 2: Crawl4AI Entry Crawl, DNS Pinning & Anti-Bot Defense
 The verified URL is fetched using `crawl4ai.AsyncWebCrawler`:
-* **Browser Runtime:** Headless Chromium with modern desktop viewport (1920x1080).
+* **Browser Runtime & Anti-SSRF DNS Pinning:** Headless Chromium launched with `--host-resolver-rules="MAP {domain} {resolved_ip}"`, forcing direct socket connection to the pre-validated public IP and preventing DNS rebinding. Viewport set to standard desktop (1920x1080).
 * **Stealth Configuration:** Standard desktop User-Agent rotation, navigator override, and automated Cloudflare challenge detection.
 * **Wait Strategy:** Configured to wait for DOM completion (`networkidle` or 3-second settled state).
 * **Bot Challenge Check:** Inspects the returned page title and DOM for challenge indicators (e.g., "Just a moment...", "Cloudflare Turnstile", "ddos protection"). If blocked, flags `ERR_ACCESS_CHALLENGE_BLOCKED`.
@@ -153,7 +158,12 @@ INSERT INTO source_configs (
     pagination_config,
     wait_for_selector,
     page_timeout_sec,
+    max_operation_timeout_sec,
     max_pages_per_run,
+    max_concurrent_crawls,
+    rate_limit_delay_sec,
+    robots_txt_sitemaps,
+    is_locked,
     has_multi_tab_details,
     tab_container_selector,
     has_multi_page_details,
@@ -173,7 +183,12 @@ INSERT INTO source_configs (
     :pagination_config,
     :wait_for_selector,
     30,
+    1200,
     10,
+    1,
+    :rate_limit_delay_sec,
+    :robots_txt_sitemaps,
+    false,
     :has_multi_tab_details,
     :tab_container_selector,
     :has_multi_page_details,

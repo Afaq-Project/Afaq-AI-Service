@@ -266,9 +266,27 @@ Stage 1 leverages the structural flags discovered during Stage 0 (`source_config
   ```
   If panels require DOM hydration via click events, Crawl4AI executes sequential clicks across `source_configs.tab_container_selector` prior to extracting the DOM snapshot.
 
-### 2. Multi-Page In-Article Pagination (`has_multi_page_details == true`)
-* **The Challenge:** WordPress `<!--nextpage-->` divides long articles into `/page/2/`, `/page/3/`.
-* **The Solution:** The engine inspects `subpage_pagination_selector`, crawls each sub-page URL sequentially, concatenates the article body containers into a single virtual DOM, and executes the Level 2 extraction on the unified document.
+### 2. Multi-Page In-Article Pagination & Tree-Based Lineage (`has_multi_page_details == true`)
+* **The Challenge:** WordPress `<!--nextpage-->` and similar CMS plugins divide long articles into sub-pages: `/scholarship/`, `/scholarship/2/`, `/scholarship/3/`. Without structured lineage, extracted sections become fragmented and disconnected from their source.
+* **The Tree-Based Lineage Solution:**
+  1. **Root Page Registration:** The initial article entry page is inserted into `raw_listings` as the root node of the tree:
+     * `parent_id = NULL`
+     * `root_listing_id = id`
+     * `page_number = 1`
+     * `tree_depth = 0`
+  2. **Sequential Child Crawl (Single-Browser Context):**
+     * The crawler parses `source_configs.subpage_pagination_selector` to discover ordered sub-page links.
+     * Pages are fetched sequentially (enforcing the single-browser constraint to protect memory).
+     * Each discovered sub-page is inserted into `raw_listings` as a child node referencing its immediate parent and root:
+       * `parent_id = previous_subpage_id`
+       * `root_listing_id = root_id`
+       * `page_number = N`
+       * `tree_depth = N - 1`
+  3. **Virtual DOM Concatenation:**
+     * The main article body containers from all child sub-pages are stitched together into a single, unified virtual DOM.
+     * Level 2 extraction executes on the concatenated DOM, ensuring all requirements, guidelines, and application links are captured without loss.
+  4. **Data Origin Transparency:**
+     * Downstream cleaning and admin verification can trace any extracted paragraph back to the exact sub-page URL where it originated via the tree hierarchy in `raw_listings`.
 
 ### 3. Alternative Application Channels (Mailto / Phone)
 * If no web application portal exists, the extractor captures `mailto:admissions@univ.edu` or `tel:+123456789` links, labeling the contact method appropriately in `raw_payload`.
@@ -288,27 +306,34 @@ Before inserting any data into the database, all extracted payloads pass through
 * **Safe Descriptions:** Multi-paragraph description fields inside `raw_payload` are parsed with Rust `nh3` via `ContentSanitizer.sanitize_html()`, removing scripts, inline styles, and unapproved HTML attributes.
 * **Image URL Inspection:** Verified with `FileValidator.validate_image_url()`.
 
-### Level 1 Insertion (`raw_listings`):
+### Level 1 Insertion (`raw_listings` with Tree Lineage):
 ```sql
 INSERT INTO raw_listings (
     operation_id,
     source_id,
+    parent_id,
+    root_listing_id,
+    page_number,
+    tree_depth,
     discovered_url,
     card_title_preview,
     card_snippet_preview,
     card_image_url,
     listing_page_url,
     status,
+    retry_count,
+    max_retries,
     scraped_at,
     created_at
 ) VALUES (
-    :operation_id, :source_id, :discovered_url, :card_title_preview,
+    :operation_id, :source_id, :parent_id, :root_listing_id,
+    :page_number, :tree_depth, :discovered_url, :card_title_preview,
     :card_snippet_preview, :card_image_url, :listing_page_url,
-    'pending_detail_crawl', NOW(), NOW()
+    'pending_detail_crawl', 0, 3, NOW(), NOW()
 ) ON CONFLICT (source_id, discovered_url) DO NOTHING;
 ```
 
-### Level 2 Insertion (`raw_grant_details`):
+### Level 2 Insertion (`raw_grant_details` & Database DLQ):
 ```sql
 INSERT INTO raw_grant_details (
     listing_id,
@@ -323,19 +348,28 @@ INSERT INTO raw_grant_details (
     detected_language,
     link_verification_status,
     status,
+    retry_count,
+    max_retries,
     scraped_at,
     created_at
 ) VALUES (
     :listing_id, :opportunity_group_id, :operation_id, :source_id,
     :template_id, :source_url, :template_version, :raw_payload,
     :image_url, :detected_language, 'pending_verification',
-    'pending', NOW(), NOW()
+    'pending', 0, 3, NOW(), NOW()
 );
 
 UPDATE raw_listings 
 SET status = 'details_extracted' 
 WHERE id = :listing_id;
 ```
+
+### Database-Backed Dead Letter Queue (DLQ) Lifecycle:
+* When an extraction fails:
+  * The worker increments `retry_count = retry_count + 1`.
+  * If `retry_count < max_retries`: sets `status = 'failed'` and logs the error in `extraction_errors`.
+  * If `retry_count >= max_retries`: permanently dead-letters the record by setting `status = 'failed_permanently'`.
+  * Isolates unrecoverable failures without blocking the pipeline or crashing worker memory.
 
 ---
 
