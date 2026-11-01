@@ -167,24 +167,31 @@ Stores complete, uncleaned scholarship data and verification results:
 
 ---
 
-### Stage 0: Zero-Configuration Onboarding & Relevance Gate
-When an administrator registers a new URL in `sources`:
-1. **Pre-AI Target Verification:**
-   * Perform an HTTP head/connectivity check to ensure the domain is active.
-   * Intercept parking domains, DNS errors, or HTTP 403/404/500 screens before invoking AI.
-2. **Initial Crawl via Crawl4AI:**
-   * Crawl the entry page in headless stealth mode to fetch `cleaned_html`.
-3. **AI Content Inspection & Relevance Gate:**
-   * The initial analysis prompt instructs the LLM:
-     > *"Verify whether this page represents an authentic educational opportunity, scholarship, or academic portal. If the site is irrelevant, an ad-farm, or a dead domain, return `{ 'error': 'ERR_IRRELEVANT_CONTENT_REJECTED' }`."*
-   * If rejected, the source is marked `is_active = false` with an administrative alert, avoiding further compute or LLM expense.
-4. **Autonomous Configuration Extraction:**
-   * If valid, the AI analyzes the HTML to identify:
-     * Site name and description.
-     * Supported languages (detecting language toggle links, `hreflang` tags, or route prefixes like `/ar/` or `/en/`).
-     * Pagination structure (URL query pattern, CSS next button, or infinite scroll).
-     * Optimal DOM wait selector and timeouts.
-   * Automatically populates `source_configs`.
+### Stage 0: Zero-Configuration Onboarding & Architectural Mapping
+> **Full Detailed Specification:** See [`stage_0_source_discovery/source_discovery_specification.md`](./stage_0_source_discovery/source_discovery_specification.md) for complete technical rules, data contracts, and implementation steps.
+
+When an administrator registers a target URL in `sources`, Stage 0 autonomously understands and maps the platform **without scraping any scholarships or generating extraction templates yet**:
+
+1. **Pre-flight Network & Domain Health Gate (Zero AI Cost):**
+   * Verifies URL syntax and performs an async `HEAD`/`GET` reachability check.
+   * Asserts destination returns `HTTP 200 OK` with a valid SSL certificate.
+   * Intercepts DNS failures, connection timeouts, or registrar/parking splash pages before invoking the browser or AI.
+2. **Stealth Entry Crawl via Crawl4AI:**
+   * Fetches the entry URL using `crawl4ai.AsyncWebCrawler` with headless Chromium in stealth mode to bypass anti-bot hurdles and render client-side JavaScript.
+3. **DOM Skeletonization & Pruning (Token Minimization):**
+   * Aggressively strips scripts, styles, SVGs, inlines, tracking tags, and hidden elements.
+   * Collapses repetitive card siblings (keeps 2 sample cards, drops remaining).
+   * Truncates body paragraphs while strictly preserving navigation menus, tabs, links with anchor text, language switchers, and pagination controls.
+   * Compresses 1.5MB raw HTML to 3KB–8KB (~800–1,800 tokens).
+4. **AI Platform Analysis & Relevance Gate:**
+   * **Relevance First:** Enforces a strict prompt gate. If the site is unrelated, an ad-farm, or not an opportunity portal, Gemini returns `ERR_NOT_OPPORTUNITY_PORTAL` and halts.
+   * Deduces official `site_name` and `site_description`.
+   * Discovers where grants actually reside (`catalog_url`) and identifies supported languages (`supported_languages: ["ar", "en"]`).
+5. **Conditional 2nd-Hop Crawl:**
+   * If the entry URL was a root homepage, performs exactly one follow-up crawl on the discovered `catalog_url` to inspect and lock in the catalog pagination mechanics (`pagination_type` and `pagination_config`).
+   * Hard limit: maximum 2 crawls total for the entire onboarding stage.
+6. **Populating `source_configs`:**
+   * Persists all technical settings into `source_configs` and activates `sources.is_active = true`, leaving the source fully prepared for subsequent extraction phases.
 
 ---
 
