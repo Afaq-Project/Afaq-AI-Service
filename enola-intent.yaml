@@ -1,0 +1,17 @@
+version: 1
+components:
+  - name: api
+    match:
+      - "src/api/**"
+  - name: modules
+    match:
+      - "src/modules/**"
+
+rules:
+  - id: "no-modules-to-api"
+    forbid: "modules"
+    to: "api"
+    via: "imports"
+    mode: "strict"
+    because: "Domain modules must never depend on the API transport layer"
+

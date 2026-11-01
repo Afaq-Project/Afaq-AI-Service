@@ -19,3 +19,17 @@ def test_layer_boundaries_api_does_not_depend_on_repositories():
         .may_not_depend_on_layers("repositories")
     )
     testing.assert_passes(rule)
+
+
+def test_layer_boundaries_repositories_do_not_depend_on_api():
+    """Ensure repository data layer never imports or couples with API transport layer."""
+    rule = (
+        layers("src")
+        .layer("api")
+        .defined_by_folder("api")
+        .layer("repositories")
+        .defined_by_folder("modules/*/repositories")
+        .where_layer("repositories")
+        .may_not_depend_on_layers("api")
+    )
+    testing.assert_passes(rule)

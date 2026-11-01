@@ -1,0 +1,27 @@
+# ArchMAP Architecture Configuration
+# Minimum Viable Architecture (MVA) Rules
+
+[analysis]
+ignore_dirs = [
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    ".scannerwork",
+    ".enola",
+    ".codeatlas",
+    "backups",
+]
+
+[analysis.budgets]
+max_outgoing_per_file = 20
+max_incoming_per_file = 25
+
+[architecture.rules]
+forbid = [
+    "api -> repositories",
+    "repositories -> api",
+]
+
+[risks.layer_order]
+src = 1
