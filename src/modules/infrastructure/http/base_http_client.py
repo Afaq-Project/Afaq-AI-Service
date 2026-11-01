@@ -53,6 +53,17 @@ class BaseHttpClient:
         response = await self.get(url, **kwargs)
         return response.json()
 
+    def _handle_request_exception(
+        self, exc: Exception, method: str, url: str, attempt: int
+    ) -> Exception:
+        if isinstance(exc, httpx.TimeoutException):
+            err: Exception = HttpTimeoutError(f"Timeout on {method} {url}")
+        else:
+            err = HttpConnectionError(f"Connection failed on {method} {url}")
+        if not self._retry.should_retry(attempt, None):
+            raise err from exc
+        return err
+
     async def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         attempt = 0
         last_error: Exception | None = None
@@ -61,22 +72,15 @@ class BaseHttpClient:
             attempt += 1
             try:
                 response = await self._client.request(method, url, **kwargs)
-            except httpx.TimeoutException as exc:
-                last_error = HttpTimeoutError(f"Timeout on {method} {url}")
-                if not self._retry.should_retry(attempt, None):
-                    raise last_error from exc
-            except httpx.RequestError as exc:
-                last_error = HttpConnectionError(f"Connection failed on {method} {url}")
-                if not self._retry.should_retry(attempt, None):
-                    raise last_error from exc
+            except (httpx.TimeoutException, httpx.RequestError) as exc:
+                last_error = self._handle_request_exception(exc, method, url, attempt)
             else:
                 if response.is_success:
                     return response
 
-                if not self._retry.should_retry(attempt, response.status_code):
-                    raise self._build_error(response)
-
                 last_error = self._build_error(response)
+                if not self._retry.should_retry(attempt, response.status_code):
+                    raise last_error
 
             logger.warning(
                 "Retrying %s %s (attempt %d/%d)",

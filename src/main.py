@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from src.api.errors import register_global_error_handlers
-from src.api.routes.v1 import health, matching, webhook
+from src.api.routes.v1 import health, webhook
 from src.modules.core.config.settings import get_settings
 from src.modules.core.database.prisma_client import connect, disconnect
 from src.modules.infrastructure.llm.providers import close_llm_clients
@@ -35,4 +35,3 @@ register_global_error_handlers(app)
 
 app.include_router(health.router)
 app.include_router(webhook.router)
-app.include_router(matching.router)

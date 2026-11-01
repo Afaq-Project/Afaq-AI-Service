@@ -1,0 +1,11 @@
+[allowlist]
+description = "Project allowlist"
+paths = [
+  '''.venv''',
+  '''\.agent/skills''',
+  '''\.specify''',
+  '''backups''',
+]
+regexes = [
+  '''lv_V_7WjL0pQm3xK\.\.\.'''
+]

@@ -13,7 +13,6 @@ class Settings(BaseSettings):
     )
 
     database_url: str = ""
-    profile_api_database_url: str = ""
     environment: str = "development"
     log_level: str = "INFO"
 
@@ -21,8 +20,6 @@ class Settings(BaseSettings):
 
     main_service_webhook_url: str = ""
     main_service_webhook_secret: str = ""
-    matching_webhook_url: str = ""
-    matching_webhook_secret: str = ""
     webhook_timeout: float = 15.0
 
     # AI & LLM settings (for Stage 0 Discovery & Stage 1 Schema Synthesis)
