@@ -17,7 +17,7 @@ from src.modules.matching.models import (
     RequirementStatus,
     RequirementType,
 )
-from src.modules.scraping.services.normalization_service import (
+from src.modules.matching.services.normalization_service import (
     COUNTRY_MAPPINGS,
     NormalizationService,
 )

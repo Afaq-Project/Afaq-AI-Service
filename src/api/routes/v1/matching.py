@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
 from src.api.dependencies import get_matching_service, require_api_key
-from src.api.models.ai_responses import ErrorResponse
+from src.api.models.common import ErrorResponse
 from src.api.models.matching_requests import (
     FullRematchRequest,
     MatchCalculationRequest,

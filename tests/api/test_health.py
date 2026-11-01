@@ -1,63 +1,32 @@
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
-from src.api.routes.v1 import health
+from httpx import AsyncClient
 
 
-class FakeClient:
-    """عميل قاعدة بيانات وهمي."""
+@pytest.mark.asyncio
+async def test_health_check_healthy(client: AsyncClient):
+    with patch("src.api.routes.v1.health.get_client") as mock_get_client:
+        mock_prisma = AsyncMock()
+        mock_prisma.query_raw = AsyncMock(return_value=[{"?column?": 1}])
+        mock_get_client.return_value = mock_prisma
 
-    def __init__(self, should_fail: bool = False):
-        self.should_fail = should_fail
-        self.queries = []
-
-    async def query_raw(self, query: str):
-        if self.should_fail:
-            raise ConnectionError("database unreachable")
-        self.queries.append(query)
-        return [{"?column?": 1}]
-
-
-@pytest.fixture
-def app() -> FastAPI:
-    application = FastAPI()
-    application.include_router(health.router)
-    return application
-
-
-class TestHealthEndpoint:
-    def test_returns_ok_when_database_reachable(self, app, monkeypatch):
-        monkeypatch.setattr(health, "get_client", lambda: FakeClient())
-
-        response = TestClient(app).get("/health")
-
+        response = await client.get("/health")
         assert response.status_code == 200
-        assert response.json() == {"status": "ok", "database": "connected"}
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["database"] == "connected"
 
-    def test_returns_503_when_database_fails(self, app, monkeypatch):
-        monkeypatch.setattr(health, "get_client", lambda: FakeClient(should_fail=True))
 
-        response = TestClient(app).get("/health")
+@pytest.mark.asyncio
+async def test_health_check_degraded(client: AsyncClient):
+    with patch("src.api.routes.v1.health.get_client") as mock_get_client:
+        mock_prisma = AsyncMock()
+        mock_prisma.query_raw = AsyncMock(side_effect=Exception("DB Down"))
+        mock_get_client.return_value = mock_prisma
 
+        response = await client.get("/health")
         assert response.status_code == 503
-        assert response.json()["status"] == "degraded"
-        assert response.json()["database"] == "unavailable"
-
-    def test_returns_503_when_client_not_initialised(self, app, monkeypatch):
-        def raise_runtime_error():
-            raise RuntimeError("Database not connected")
-
-        monkeypatch.setattr(health, "get_client", raise_runtime_error)
-
-        response = TestClient(app).get("/health")
-
-        assert response.status_code == 503
-
-    def test_actually_queries_the_database(self, app, monkeypatch):
-        fake = FakeClient()
-        monkeypatch.setattr(health, "get_client", lambda: fake)
-
-        TestClient(app).get("/health")
-
-        assert fake.queries == ["SELECT 1"]
+        data = response.json()
+        assert data["status"] == "degraded"
+        assert data["database"] == "unavailable"

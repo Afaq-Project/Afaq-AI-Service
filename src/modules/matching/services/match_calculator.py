@@ -37,11 +37,11 @@ from src.modules.matching.models import (
 from src.modules.matching.services.hard_filter_service import (
     _user_has_matching_experience_area,
 )
+from src.modules.matching.services.normalization_service import NormalizationService
 from src.modules.matching.services.opportunity_requirements_matcher import (
     OpportunityRequirementsMatcher,
 )
 from src.modules.matching.services.requirement_extractor import RequirementExtractor
-from src.modules.scraping.services.normalization_service import NormalizationService
 
 
 def clamp(val: float, min_val: float = 0.0, max_val: float = 1.0) -> float:

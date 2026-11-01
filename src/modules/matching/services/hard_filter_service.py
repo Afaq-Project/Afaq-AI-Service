@@ -26,8 +26,8 @@ from src.modules.matching.models import (
     RequirementType,
     UserProfileDTO,
 )
+from src.modules.matching.services.normalization_service import NormalizationService
 from src.modules.matching.services.requirement_extractor import RequirementExtractor
-from src.modules.scraping.services.normalization_service import NormalizationService
 
 # Study-level hierarchy for education level comparison
 _LEVEL_ORDER = ["High School", "Diploma", "Bachelor", "Master", "PhD", "Postdoc"]

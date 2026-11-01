@@ -18,8 +18,8 @@ from src.modules.matching.models import (
     RequirementType,
     UserProfileDTO,
 )
+from src.modules.matching.services.normalization_service import NormalizationService
 from src.modules.matching.services.requirement_extractor import RequirementExtractor
-from src.modules.scraping.services.normalization_service import NormalizationService
 
 
 class RequirementMatchDecision(StrEnum):
