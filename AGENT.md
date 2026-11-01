@@ -32,6 +32,22 @@ This document establishes the architectural principles, coding conventions, test
     - Security scanning policies ([`.gitleaks.toml`](file:///home/abood/Project/Afaq/Afaq-AI-Service/.gitleaks.toml), Trivy arguments)
   * Any update, adjustment of thresholds, or alteration of architectural rules may **ONLY be executed upon an explicit, direct command from the user**. If a code change triggers an architectural violation or quality gate failure, the agent must fix the application code to comply—never tamper with the rules to force a pass.
 
+* **Proactive Architectural Proposals (User Consideration Gate):**
+  * While the agent is strictly forbidden from unilaterally altering architectural rule files, it **is actively encouraged to propose useful architectural guidelines and constraints** when it identifies structural risks, coupling anti-patterns, or opportunities for design improvements during development.
+  * **Strict Criteria for Proposals:**
+    - Proposals must **not be made arbitrarily**, superficially, or for mere pedantic reasons.
+    - Each proposal must be supported by a **clear, sound, and technically defensible rationale**.
+    - It must deliver a **tangible and distinct benefit** to the project (e.g., preventing tight coupling, enforcing modular isolation, safeguarding domain invariants, enhancing maintainability, or simplifying testability).
+  * **Presentation Protocol:** The agent must present these architectural suggestions to the user with full technical context so that the user and agent may collaboratively evaluate and decide whether to incorporate them into the project's official architectural guidelines.
+
+* **Diagnostic Tool Execution Trigger & Scope (Code vs. Non-Code Changes):**
+  * The agent must perform verification checks using the diagnostic tools whenever necessary—specifically **prior to committing code changes**.
+  * **Code & Architecture Changes (Full Verification Mandatory):**
+    - Any change touching application source code (`src/`), tests (`tests/`), dependency manifests (`pyproject.toml`, `uv.lock`), database schemas, migration scripts, shell scripts (`scripts/`), Docker/deployment configurations, or architectural definitions (`.archmap.toml`, `enola-intent.yaml`, `mcp-arch.yaml`) **MUST** trigger the required diagnostic verification tools (formatting, unit/contract tests, ArchUnit, KG-ARCHMAP, Enola, Pact, Trivy, Gitleaks, SonarQube) before committing.
+  * **Non-Code & Pure Documentation Changes (Tool Execution Exemption):**
+    - If a commit or modification is strictly unrelated to the codebase—such as editing Markdown documentation (`docs/`, `AGENT.md`, `README.md`, `metadata.md`), SpecKit governance artifacts (`.specify/`), or non-executable notes—and has **zero impact on the codebase, runtime dependencies, or architectural configuration**, the agent **SHOULD NOT** trigger these diagnostic tools.
+    - Skipping diagnostic suites for pure documentation and non-code updates eliminates redundant runtime overhead, prevents unnecessary load on local services, and accelerates documentation maintenance while ensuring rigorous enforcement for all executable code.
+
 * **Zero Local Container Builds:**
   * **Never run `docker build` locally.** Container builds are handled exclusively by CI/CD pipelines.
 
@@ -137,7 +153,10 @@ Tests exist to prevent regressions and verify real business behaviors. Avoid tes
 
 ## 5. Mandatory Pre-Commit Verification Pipeline
 
-Before committing ANY code, the agent MUST run the full verification pipeline and ensure all checks pass with zero violations.
+Before committing ANY code or changes that impact the application codebase, runtime dependencies, or architectural configuration, the agent MUST run the full verification pipeline and ensure all checks pass with zero violations.
+
+> [!NOTE]
+> As established in Section 1, non-code changes (such as pure documentation updates in `docs/`, `AGENT.md`, `README.md`, or SpecKit specification files in `.specify/`) that have zero impact on the codebase or architecture are **exempt** from triggering this diagnostic pipeline.
 
 ### 5.1 Code Formatting & Linting (Ruff & Black)
 * **Ruff (Linter & Import Organizer):**
@@ -274,7 +293,7 @@ Pact is used to prevent breaking contract changes between `afaq-ai-service` and 
 
 ## 6. Pre-Commit Checklist Summary
 
-Every functional commit must satisfy the following checklist:
+Every functional commit touching application code, dependencies, or architectural configuration must satisfy the following checklist:
 
 | Verification Gate | Command | Passing Threshold |
 | :--- | :--- | :--- |
