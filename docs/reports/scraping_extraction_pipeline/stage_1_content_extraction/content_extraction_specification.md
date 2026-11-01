@@ -13,6 +13,7 @@ Stage 1 is the **Data Extraction, Pulling & Template Management** engine of the 
   * Enforces an automated **Soft-Drift Micro-Repair** routine (`v1.0` $\rightarrow$ `v1.1`) to fix individual broken selectors without regenerating entire templates.
   * Extracts scholarship featured image URLs (`image_url`) at both listing and detail levels.
   * Handles advanced platform quirks identified in Stage 0 (multi-tab scholarship panels and in-article pagination).
+  * Enforces mandatory security gates (`src/modules/security/`): validates URLs via `LinkValidator`, sanitizes plain text and rich descriptions via `ContentSanitizer`, and validates image URLs and attachment streams via `FileValidator`.
   * Persists extracted data into `raw_listings` and `raw_grant_details` with `status = "pending"`.
 * **What this stage DOES NOT do:**
   * It does **not** perform canonical taxonomy mapping (e.g. mapping "Postgraduate" to `EducationLevel` UUIDs).
@@ -124,11 +125,12 @@ consecutive_empty_pages = 0
 first_page_card_urls = set()
 
 while current_page <= max_pages:
-    # 1. Construct paginated URL
+    # 1. Construct & Security-Validate paginated URL
     url = build_paginated_url(catalog_url, current_page, pagination_config)
+    validated_url = await LinkValidator.validate_url(url)
     
     # 2. Crawl & Extract Level 1 Cards via active template
-    cards = extract_level_1_listings(url, level_1_template)
+    cards = extract_level_1_listings(validated_url.canonical_url, level_1_template)
     card_urls = {c["discovered_url"] for c in cards}
     
     # 3. Stop Signal: Zero-Yield (Empty Catalog)
@@ -194,6 +196,10 @@ When template synthesis or repair is required, raw HTML (1MB–3MB) is pruned be
 
 *Token Reduction:* Compresses 1.5MB pages down to **8KB–18KB (~2,000–3,500 tokens)**, retaining 100% of the semantic anchors the LLM needs to deduce exact selectors.
 
+### Security Wrapping & Template Validation:
+* **Prompt Shielding:** All pruned DOM payloads sent to Gemini Flash are wrapped inside `<untrusted_web_content>` isolation boundaries via `ContentSanitizer.wrap_untrusted_prompt()`, preventing prompt injection from third-party HTML.
+* **Schema Verification:** Any newly synthesized or repaired template schema must pass `ContentSanitizer.validate_template_schema()` before persisting into `scraping_templates`, verifying CSS selectors and disallowing malicious XPath constructs (`ERR_INVALID_TEMPLATE_SCHEMA`).
+
 ---
 
 ## 7. Soft-Drift Micro-Repair (`v1.0` $\rightarrow$ `v1.1`) vs. Hard Drift (`v2.0`)
@@ -236,9 +242,11 @@ Images are required for displaying opportunity cards and detail banners on the A
   * Extracted from the main article banner: `article img.featured[src]`, `div.post-thumbnail img[src]`, or OpenGraph meta tags:
     `<meta property="og:image" content="...">`.
   * Stored in `raw_grant_details.image_url`.
-* **Sanitization & URL Resolution:**
+* **Sanitization, Anti-SSRF & URL Resolution:**
   * Relative image paths (`/uploads/2026/05/scholarship.jpg`) are automatically resolved to absolute URLs via `urljoin(base_url, img_src)`.
-  * Strips data-URIs, base64 blobs, 1x1 tracking pixels, gravatars, and SVG icons.
+  * Verified through `FileValidator.validate_image_url()`: strictly enforces allowed raster/modern image types (`jpg`, `jpeg`, `png`, `webp`, `avif`).
+  * Rejects data-URIs, base64 blobs, 1x1 tracking pixels, gravatars, and un-sanitized SVG vectors (`ERR_INVALID_IMAGE_TYPE`).
+  * Verified against Anti-SSRF rules to ensure image hosting does not target private or cloud metadata IPs.
 
 ---
 
@@ -273,7 +281,12 @@ Stage 1 leverages the structural flags discovered during Stage 0 (`source_config
 
 ---
 
-## 10. Database Persistence & Telemetry
+## 10. Database Persistence & Sanitization Gateway
+
+Before inserting any data into the database, all extracted payloads pass through the **Security & Validation Gateway** (`src/modules/security/`):
+* **Plain Text Purity:** Every structured string field (`title`, `organization`, `stipend`, `deadline_raw`, `country`, `degree_levels`) is sanitized via `ContentSanitizer.to_clean_text()`, stripping tags and normalizing Unicode.
+* **Safe Descriptions:** Multi-paragraph description fields inside `raw_payload` are parsed with Rust `nh3` via `ContentSanitizer.sanitize_html()`, removing scripts, inline styles, and unapproved HTML attributes.
+* **Image URL Inspection:** Verified with `FileValidator.validate_image_url()`.
 
 ### Level 1 Insertion (`raw_listings`):
 ```sql
@@ -328,16 +341,24 @@ WHERE id = :listing_id;
 
 ## 11. Module Structure in the Codebase
 
-This stage is isolated in `src/modules/scraping/extraction/`:
+This stage is isolated in `src/modules/scraping/extraction/` and coordinates with the mandatory security module:
 
 ```
-src/modules/scraping/extraction/
-├── __init__.py
-├── template_matcher.py        # 3-Gate Deterministic Matching Engine
-├── dom_pruner.py              # Sample-Anchored Pruning & Truncation
-├── schema_generator.py        # Crawl4AI + Gemini agenerate_schema wrapper
-├── micro_repair_service.py    # Soft-Drift Selector Repair (v1.0 -> v1.1)
-├── multi_tab_handler.py       # JS Tab unhiding and multi-page concatenation
-├── extraction_pipeline.py     # Orchestrator: Level 1 -> Level 2 extraction
-└── models.py                  # Pydantic schemas for templates, extraction payloads & drift
+src/modules/
+├── security/                  # Mandatory System-Wide Security Gateway
+│   ├── link_validator.py      # Anti-SSRF, DNS Pinning & Circular Redirect Trap
+│   ├── content_sanitizer.py   # Plain-Text Stripper, Safe HTML (nh3) & Prompt Shielding
+│   ├── file_validator.py      # Pre-S3 Magic Byte Inspection & Stream Download Limits
+│   ├── models.py              # ValidatedUrl & ValidatedFile Pydantic contracts
+│   └── exceptions.py          # SecurityValidationError & machine error codes
+│
+└── scraping/extraction/       # Data Extraction & Template Subsystem
+    ├── __init__.py
+    ├── template_matcher.py    # 3-Gate Deterministic Matching Engine
+    ├── dom_pruner.py          # Sample-Anchored Pruning & Truncation
+    ├── schema_generator.py    # Crawl4AI + Gemini agenerate_schema wrapper
+    ├── micro_repair_service.py# Soft-Drift Selector Repair (v1.0 -> v1.1)
+    ├── multi_tab_handler.py   # JS Tab unhiding and multi-page concatenation
+    ├── extraction_pipeline.py # Orchestrator: Level 1 -> Level 2 extraction
+    └── models.py              # Pydantic schemas for templates, extraction payloads & drift
 ```

@@ -54,16 +54,19 @@ Stage 0 is the **Zero-Configuration Onboarding & Architectural Mapping** phase o
 ## 3. Step-by-Step Technical Breakdown
 
 ### Step 1: Pre-flight URL & Network Health Gate (Zero AI Cost)
-Before initializing browser drivers or passing content to LLMs, the system runs an asynchronous network verification check:
-1. **URL Sanitization & Syntax:** Validates URL format (`http://` or `https://`, valid hostname).
-2. **Connectivity & HTTP Status Check:** Sends an asynchronous `HEAD` (or lightweight `GET` if `HEAD` is refused) request following redirects (max 5 hops):
-   * Destination must return `HTTP 200 OK`.
-   * SSL certificate must be valid and unexpired.
+Before initializing browser drivers or passing content to LLMs, the system passes the admin-provided URL through the mandatory security gateway (`LinkValidator.validate_url` from `src/modules/security/`):
+1. **URL Sanitization & Syntax:** Validates RFC 3986 format, normalizes hostnames, and enforces allowed schemes (`http`, `https`) and ports (`80`, `443`). Rejects non-standard protocols (`file:`, `data:`, `gopher:`) and port tampering (`ERR_INVALID_SCHEME`, `ERR_INVALID_PORT`).
+2. **Anti-Homograph & Path Traversal Verification:** Detects mixed-script IDN homograph spoofing (`ERR_HOMOGRAPH_ATTACK`) and rejects path traversal sequences like `../` or `..%2f` (`ERR_PATH_TRAVERSAL`).
+3. **Anti-SSRF & DNS Pinning:** Resolves target domain to its underlying IP addresses before dispatching requests. Blocks private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), local loopback (`127.0.0.1`), and AWS metadata (`169.254.169.254`). Rejects with `ERR_SSRF_ATTEMPT_BLOCKED`.
+4. **Connectivity, SSL & Circular Redirect Traversal:** Sends an asynchronous `HEAD` (or lightweight `GET` fallback) request following HTTP redirects up to a maximum of 5 hops:
+   * Traps circular/infinite redirect loops (`ERR_CIRCULAR_REDIRECT`).
+   * Ensures no intermediate redirect points to private/internal IPs.
+   * Destination must return `HTTP 200 OK` with a valid, unexpired SSL certificate.
    * Total network timeout is capped at 10 seconds.
-3. **Dead Domain & Parking Page Traps:**
+5. **Dead Domain & Parking Page Traps:**
    * Identifies DNS resolution failures (`NXDOMAIN`).
    * Intercepts parked domain signatures, domain-for-sale splash screens, or default web server screens (e.g. "Apache2 Default Page", "cPanel Default Page").
-4. **Immediate Exit:** If unreachable or dead, sets `sources.is_active = false`, logs `last_error = "ERR_URL_UNREACHABLE"` or `"ERR_PARKING_DOMAIN"`, and stops immediately.
+6. **Immediate Exit:** If unreachable, invalid, or flagged as dead/dangerous, sets `sources.is_active = false`, logs `last_error = error_code` (e.g., `"ERR_SSRF_ATTEMPT_BLOCKED"`, `"ERR_URL_UNREACHABLE"`), and stops immediately without consuming browser or AI compute.
 
 ### Step 2: Crawl4AI Entry Crawl & Anti-Bot Defense
 The verified URL is fetched using `crawl4ai.AsyncWebCrawler`:
@@ -97,11 +100,10 @@ To minimize LLM token consumption while preserving the architecture, the raw HTM
 
 *Metric:* A typical 1.5MB portal page compresses down to **3KB–8KB** (~800 to 1,800 tokens), yielding over a 95% token savings.
 
-### Step 4: AI Platform Analysis & Relevance Gate
-The structural skeleton is provided to Gemini Flash with a strictly typed JSON output schema:
-
-#### System Prompt Instructions:
-1. **Relevance Gate First:** The AI must first verify whether the site is an educational, grant, scholarship, or fellowship platform. If it is an e-commerce shop, general news site, or personal blog, it must return:
+### Step 4: AI Platform Analysis, Prompt Shielding & Relevance Gate
+Before transmitting the pruned structural skeleton to Gemini Flash, it is processed through the security module's prompt isolation boundary:
+1. **Prompt Injection Shielding:** The pruned HTML is wrapped in `<untrusted_web_content origin_domain="..." hash="...">` tags via `ContentSanitizer.wrap_untrusted_prompt()`. The system prompt instructs Gemini Flash to evaluate this block strictly as raw passive data, actively neutralizing embedded adversarial prompts or instruction-hijacking attempts.
+2. **Relevance Gate First:** The AI must first verify whether the site is an educational, grant, scholarship, or fellowship platform. If it is an e-commerce shop, general news site, or personal blog, it must return:
    ```json
    {
      "is_opportunity_portal": false,
@@ -130,9 +132,10 @@ The structural skeleton is provided to Gemini Flash with a strictly typed JSON o
 * **Condition Check:**
   * If the entry URL already contained the active catalog and pagination controls: **Skip Step 5 (1 crawl total).**
   * If the entry URL was a portal root homepage (e.g., `https://almin7.com`) and the AI discovered a dedicated `catalog_url` (e.g., `https://almin7.com/scholarship/`):
-    1. Crawl4AI performs **one additional crawl** on `catalog_url`.
-    2. The DOM is skeletonized to verify pagination controls (`?page=`, `.pagination a.next`) and inspect sample cards.
-    3. Locks in the final `pagination_type`, `pagination_config`, and verifies if tabbed/multi-page structures are present.
+    1. Validates the discovered `catalog_url` through `LinkValidator.validate_url()`.
+    2. Crawl4AI performs **one additional crawl** on `catalog_url`.
+    3. The DOM is skeletonized to verify pagination controls (`?page=`, `.pagination a.next`) and inspect sample cards.
+    4. Locks in the final `pagination_type`, `pagination_config`, and verifies if tabbed/multi-page structures are present.
 * **Cap:** Maximum 2 crawls total for the entire discovery stage. Never crawls detail articles or auxiliary pages.
 
 ### Step 6: Database Persistence (`source_configs`)

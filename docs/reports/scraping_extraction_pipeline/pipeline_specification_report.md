@@ -21,6 +21,8 @@ This specification defines the redesigned, fully autonomous **Data Extraction En
    All downloadable application forms, PDFs, and guides are streamed directly into an AWS S3 bucket with SHA256 deduplication.
 7. **Pre-AI Validation & Content Relevance Gates:**
    Access failures (Cloudflare blocks, parking domains, HTTP 403/404) are intercepted before invoking AI. During template synthesis, the prompt instructs the LLM to inspect domain relevance first; non-opportunity pages trigger explicit, pre-defined error codes to eliminate wasted LLM costs.
+8. **Mandatory Security, Link Validation & Content Sanitization Gateway:**
+   All network requests, URLs, and incoming web content must traverse the centralized `src/modules/security/` module (`LinkValidator`, `ContentSanitizer`, and `FileValidator`). Enforces strict Anti-SSRF private IP blocking, 5-hop circular redirect traps, pure plain-text extraction for structured fields, Rust-based `nh3` safe HTML sanitization, LLM prompt injection shielding, and pre-S3 magic-byte validation.
 
 ---
 
@@ -181,9 +183,10 @@ Stores complete, uncleaned scholarship data and verification results:
 When an administrator registers a target URL in `sources`, Stage 0 autonomously understands and maps the platform **without scraping any scholarships or generating extraction templates yet**:
 
 1. **Pre-flight Network & Domain Health Gate (Zero AI Cost):**
-   * Verifies URL syntax and performs an async `HEAD`/`GET` reachability check.
+   * Uses `LinkValidator.validate_url()`: verifies RFC 3986 syntax, enforces `http`/`https` and port 80/443, checks for IDN homograph spoofing, rejects path traversal (`../`), and validates resolved IP against Anti-SSRF private/cloud metadata ranges (`ERR_SSRF_ATTEMPT_BLOCKED`).
+   * Performs an async `HEAD`/`GET` reachability check (traversing up to 5 hops with circular redirect trapping via `ERR_CIRCULAR_REDIRECT`).
    * Asserts destination returns `HTTP 200 OK` with a valid SSL certificate.
-   * Intercepts DNS failures, connection timeouts, or registrar/parking splash pages before invoking the browser or AI.
+   * Intercepts DNS failures (`NXDOMAIN`), connection timeouts, or registrar/parking splash pages before invoking the browser or AI.
 2. **Stealth Entry Crawl via Crawl4AI:**
    * Fetches the entry URL using `crawl4ai.AsyncWebCrawler` with headless Chromium in stealth mode to bypass anti-bot hurdles and render client-side JavaScript.
 3. **DOM Skeletonization & Pruning (Token Minimization):**
@@ -191,12 +194,13 @@ When an administrator registers a target URL in `sources`, Stage 0 autonomously 
    * Collapses repetitive card siblings (keeps 2 sample cards, drops remaining).
    * Truncates body paragraphs while strictly preserving navigation menus, tabs, links with anchor text, language switchers, and pagination controls.
    * Compresses 1.5MB raw HTML to 3KB–8KB (~800–1,800 tokens).
-4. **AI Platform Analysis & Relevance Gate:**
+4. **AI Platform Analysis & Prompt Shielding:**
+   * **Prompt Injection Shielding:** Pruned DOM is wrapped inside `<untrusted_web_content>` isolation boundaries via `ContentSanitizer.wrap_untrusted_prompt()` before transmission to Gemini Flash.
    * **Relevance First:** Enforces a strict prompt gate. If the site is unrelated, an ad-farm, or not an opportunity portal, Gemini returns `ERR_NOT_OPPORTUNITY_PORTAL` and halts.
    * Deduces official `site_name` and `site_description`.
    * Discovers where grants actually reside (`catalog_url`) and identifies supported languages (`supported_languages: ["ar", "en"]`).
 5. **Conditional 2nd-Hop Crawl:**
-   * If the entry URL was a root homepage, performs exactly one follow-up crawl on the discovered `catalog_url` to inspect and lock in the catalog pagination mechanics (`pagination_type` and `pagination_config`).
+   * If the entry URL was a root homepage, validates the discovered `catalog_url` via `LinkValidator`, then performs exactly one follow-up crawl to inspect and lock in the catalog pagination mechanics (`pagination_type` and `pagination_config`).
    * Hard limit: maximum 2 crawls total for the entire onboarding stage.
 6. **Populating `source_configs`:**
    * Persists all technical settings into `source_configs` and activates `sources.is_active = true`, leaving the source fully prepared for subsequent extraction phases.
@@ -247,9 +251,10 @@ Triggered only when no existing template in the pool matches the current layout:
    * The synthesis prompt enforces a strict verification check:
      > *"Before generating extraction selectors, verify that this page contains scholarship/opportunity information. If the content represents an error page, expired listing, or unrelated text, return: `{'error': 'ERR_NOT_OPPORTUNITY_PORTAL'}`."*
    * If an error code is returned, synthesis aborts cleanly, and the incident is logged in `scrape_operations.error_summary`.
-2. **Schema Generation via Crawl4AI:**
-   * Executes `JsonCssExtractionStrategy.agenerate_schema` using Gemini Flash via `LLMConfig`.
+2. **Schema Generation & Security Validation:**
+   * Executes `JsonCssExtractionStrategy.agenerate_schema` using Gemini Flash via `LLMConfig` on `<untrusted_web_content>`-shielded pruned DOM.
    * Targets canonical JSON contracts (Level 1: cards, pagination; Level 2: full scholarship attributes).
+   * **Template Security Verification:** Calls `ContentSanitizer.validate_template_schema()` to guarantee generated CSS/XPath selectors contain no JavaScript injection, malicious XPath evaluation functions, or syntax anomalies (`ERR_INVALID_TEMPLATE_SCHEMA`).
 3. **Dry-Run Validation Gate:**
    * Runs the candidate schema against the retrieved HTML sample.
    * Must pass the strict validation gate (valid container, non-empty title, valid action link).
@@ -265,13 +270,17 @@ Triggered only when no existing template in the pool matches the current layout:
    * **URL Query Parameters (`page` & `limit`):** Iterates `?page=N`. Where supported, passes `&limit=50` (or `per_page=50`) to expand page size, reducing required network calls by **5x–10x**.
    * **Path Parameters:** Formats URL via `/scholarships/page/{page}/`.
    * **Next-Button DOM Selector:** Follows `.pagination a.next, a[rel="next"]`.
+   * **Pre-Fetch Link Check:** Every paginated URL is pre-verified via `LinkValidator.validate_url()`.
 2. **The 5 Deterministic Catalog Termination & Cutoff Signals:**
    * **DOM Next-Button Absence / Disabled:** The next-button link disappears or bears attributes like `disabled` or `.disabled`.
    * **Zero-Yield State (Empty Catalog):** Container returns 0 cards (`len(cards) == 0`) with empty state indicators.
    * **Circular Redirect & Duplicate Fingerprint (CMS Trap):** Detects silent WordPress loops where page $N$ redirects to or repeats page 1 cards.
    * **HTTP 404 / 410 Response:** Server indicates page index out-of-bounds.
    * **Incremental Database Cutoff (No NEW Content):** If 100% of the cards on Page $N$ already exist in `raw_listings`, halts traversal early (under 15 seconds for recurring crawls), skipping older historical pages.
-3. Discovered links and card thumbnails are upserted into `raw_listings`:
+3. **Content Sanitization & Database Ingestion:**
+   * Discovered card titles and preview snippets are processed through `ContentSanitizer.to_clean_text()` to strip all markup and normalize Unicode.
+   * Card thumbnail image URLs are verified through `FileValidator.validate_image_url()` (rejects raw SVGs and data URIs).
+   * Upserted into `raw_listings`:
    ```sql
    INSERT INTO raw_listings (operation_id, source_id, discovered_url, card_title_preview, card_image_url, listing_page_url, status)
    VALUES (...)
@@ -283,26 +292,30 @@ Triggered only when no existing template in the pool matches the current layout:
 
 ### Stage 6: Detail Crawl, Bilingual Acquisition & S3 Document Download
 For each newly discovered `raw_listing`:
-1. Navigates to the scholarship detail URL via Crawl4AI.
+1. Validates `raw_listing.discovered_url` via `LinkValidator.validate_url()`, then navigates via Crawl4AI.
 2. If `source_configs.has_multi_tab_details == true`, executes pre-extraction JS unhiding all `.tab-pane` and `[role="tabpanel"]` elements.
 3. If `source_configs.has_multi_page_details == true`, traverses and concatenates sub-pages before parsing.
 4. Extracts comprehensive fields and `image_url` using the active/matched Level 2 template.
+   * **Structured Fields Sanitization:** All single-value attributes (title, provider, stipend, country, degree levels, deadlines) are processed through `ContentSanitizer.to_clean_text()`, enforcing 100% plain text.
+   * **Rich Description Sanitization:** Detailed description bodies are sanitized via `ContentSanitizer.sanitize_html()` (powered by Rust `nh3`), purging all scripts, iframes, inline event handlers, and data URIs.
+   * **Image URL Verification:** Featured/hero image validated via `FileValidator.validate_image_url()`.
 5. **Bilingual Native Dual-Crawl:**
    * If `source_configs.supported_languages` includes both `ar` and `en`:
      * The crawler resolves the alternate language URL via `hreflang` tags, language toggle links in DOM, or URL rewrite rules.
      * Crawls and extracts the second language using the template.
      * Both the Arabic and English raw records are stored with the **same `opportunity_group_id: UUID`**.
      * Completely eliminates downstream Translation API costs by using official native publisher content.
-6. **Application Link Verification (Anti-Fraud Gate):**
-   * Performs an asynchronous `HEAD`/`GET` request following HTTP redirects.
-   * Resolves the `final_application_url`.
+6. **Application Link Verification (Anti-Fraud & Anti-SSRF Gate):**
+   * Inspects external application links via `LinkValidator.validate_url()`: verifies public IP resolution (blocks SSRF to internal networks or AWS IMDS), follows redirects up to 5 hops, and halts circular loops.
    * Flags suspicious patterns (ad-shorteners, spam redirects, unencrypted HTTP submission portals). Supports `mailto:` and `tel:` alternative application channels.
-7. **AWS S3 Document / PDF Stream Downloader:**
+7. **AWS S3 Document / PDF Stream Downloader & Magic-Byte Gate:**
    * If the target application link points to a file (`Content-Type: application/pdf`, `.docx`, etc.):
-     1. Streams the file contents directly to AWS S3:
+     1. Streams download via `FileValidator.download_and_validate_stream()` with a strict 25 MB cutoff.
+     2. Verifies file signature magic bytes (`%PDF-`, `PK\x03\x04`), blocking disguised executables or scripts (`ERR_MALICIOUS_FILE_TYPE`).
+     3. Streams verified binary to AWS S3:
         `s3://{BUCKET_NAME}/attachments/{source_id}/{sha256_hash}.pdf`
-     2. Sets `has_attachment = true`.
-     3. Saves S3 key, file size, mime-type, and SHA256 checksum in `attachment_metadata`.
+     4. Sets `has_attachment = true`.
+     5. Saves S3 key, file size, mime-type, and SHA256 checksum in `attachment_metadata`.
 8. **Language Determination:**
    * Evaluates text using Unicode character analysis:
      * Arabic range: `[\u0600-\u06FF]`.
@@ -355,22 +368,25 @@ To prevent LLM billing waste on invalid content, the AI prompts enforce the foll
 
 ```mermaid
 flowchart LR
-    P1[Phase 1: DB Schema & Migration] --> P2[Phase 2: Crawl4AI & S3 Storage Client]
-    P2 --> P3[Phase 3: AI Onboarding & Relevance Gate]
-    P3 --> P4[Phase 4: Template Pool & Dynamic Crawler]
-    P4 --> P5[Phase 5: Link Verifier, S3 Downloader & Legacy Cleanup]
-    P5 --> P6[Phase 6: ScraperService Integration & Tests]
+    P1[Phase 1: DB Schema & Migration] --> P2[Phase 2: Security & Validation Module]
+    P2 --> P3[Phase 3: Crawl4AI & S3 Storage Client]
+    P3 --> P4[Phase 4: AI Onboarding & Stage 0 Discovery]
+    P4 --> P5[Phase 5: Template Pool & Dynamic Crawler]
+    P5 --> P6[Phase 6: Downstream Handoff & Legacy Cleanup]
+    P6 --> P7[Phase 7: ScraperService Integration & Tests]
 ```
 
 * **Phase 1: Database Architecture & Prisma Migration:**
   Create tables: `sources` (clean), `source_configs`, `scraping_templates`, `scrape_operations`, `raw_listings`, `raw_grant_details`.
-* **Phase 2: Crawl4AI Driver & S3 Storage Client:**
+* **Phase 2: Security, Link Validation & Content Sanitization Module:**
+  Implement `src/modules/security/` (`LinkValidator` with anti-SSRF and circular redirect detection, `ContentSanitizer` with plain text stripping and Rust `nh3` HTML sanitization, `FileValidator` with magic byte validation and streaming limits).
+* **Phase 3: Crawl4AI Driver & S3 Storage Client:**
   Configure `Crawl4AiCrawler` with stealth and user-agent rotation; build `S3StorageClient` for streaming uploads.
-* **Phase 3: AI Onboarding Engine & Content Guard:**
-  Implement Stage 0 discovery worker with strict content rejection error codes.
-* **Phase 4: Multi-Template Library & Dynamic Crawler:**
-  Implement template pool matching, schema synthesis fallback, and dynamic pagination handling.
-* **Phase 5: Link Verification, S3 Downloader & Legacy Cleanup:**
-  Implement anti-fraud link checker and PDF stream downloader; delete all legacy adapter files.
-* **Phase 6: Orchestration, Webhooks & Test Suite:**
+* **Phase 4: AI Onboarding Engine & Stage 0 Discovery:**
+  Implement Stage 0 discovery worker with DOM skeletonization, prompt isolation, and strict content rejection error codes.
+* **Phase 5: Multi-Template Library & Dynamic Crawler:**
+  Implement template pool matching, schema synthesis fallback, soft-drift micro-repair (`v1.0` $\rightarrow$ `v1.1`), and dynamic pagination handling.
+* **Phase 6: Anti-Fraud Link Verifier, S3 Downloader & Legacy Cleanup:**
+  Implement application link verification and attachment stream downloader; delete all legacy adapter files.
+* **Phase 7: Orchestration, Webhooks & Test Suite:**
   Connect `ScraperService` to the new pipeline, emit webhook telemetry, and author deterministic unit tests following `AGENT.md`.
