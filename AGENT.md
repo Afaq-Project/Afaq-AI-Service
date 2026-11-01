@@ -22,6 +22,16 @@ This document establishes the architectural principles, coding conventions, test
   * All quality, security, contract, architectural, and performance tools (**SonarScanner**, **Sonar CLI**, **Trivy**, **Gitleaks**, **Pact Broker CLI**, **k6**, **KG-ARCHMAP**, **Enola**, and **ArchUnitPython**) are **already installed** on the system or environment.
   * **DO NOT** attempt to re-install, re-download, or run package managers to fetch these tools. Use the existing binaries and environment dependencies as documented in Section 5.
 
+* **Strict Architectural Rules Protection (User-Only Modification Gate):**
+  * The agent is **strictly prohibited from modifying, loosening, deleting, or bypassing architectural rule files and quality gate configurations on its own**.
+  * This restriction applies to:
+    - Architecture test definitions (e.g., [`tests/architecture/test_architecture.py`](file:///home/abood/Project/Afaq/Afaq-AI-Service/tests/architecture/test_architecture.py))
+    - Enola architectural specifications and constraints ([`mcp-arch.yaml`](file:///home/abood/Project/Afaq/Afaq-AI-Service/mcp-arch.yaml), `enola-intent.yaml`)
+    - KG-ARCHMAP configuration and budget files ([`.archmap.toml`](file:///home/abood/Project/Afaq/Afaq-AI-Service/.archmap.toml))
+    - SonarQube properties and gate definitions ([`sonar-project.properties`](file:///home/abood/Project/Afaq/Afaq-AI-Service/sonar-project.properties))
+    - Security scanning policies ([`.gitleaks.toml`](file:///home/abood/Project/Afaq/Afaq-AI-Service/.gitleaks.toml), Trivy arguments)
+  * Any update, adjustment of thresholds, or alteration of architectural rules may **ONLY be executed upon an explicit, direct command from the user**. If a code change triggers an architectural violation or quality gate failure, the agent must fix the application code to comply—never tamper with the rules to force a pass.
+
 * **Zero Local Container Builds:**
   * **Never run `docker build` locally.** Container builds are handled exclusively by CI/CD pipelines.
 
