@@ -255,7 +255,16 @@ Content-Type headers provided by HTTP servers are notoriously unreliable or easi
 * Shell Scripts (`23 21` / `#!`) $\rightarrow$ `ERR_MALICIOUS_FILE_TYPE`.
 * HTML / XML disguising as PDF/Image (`3C 21 44 4F 43 54 59 50 45` or `3C 68 74 6D 6C`) $\rightarrow$ `ERR_MALICIOUS_FILE_TYPE`.
 
-### 5.3. Image URL Verification (`validate_image_url`)
+### 5.3. Zip-Bomb Decompression Guard (`validate_zip_archive`)
+DOCX and XLSX files are zipped packages of XML files. Checking only the initial `PK\x03\x04` magic bytes is insufficient to prevent **Decompression Bomb (Zip Bomb)** attacks that exhaust server memory or disk space during downstream XML extraction:
+
+* **Inspection Without Full Decompression:** The validator inspects member metadata from the central directory table (`zipfile.ZipFile(stream).infolist()`) before accepting or storing the file.
+* **Hard Uncompressed Size Cap:** Sums the declared uncompressed size across all members. If $\sum \text{file\_size} > 50\text{ MB}$, the file is rejected with `ERR_ZIP_BOMB_DETECTED`.
+* **Compression Ratio Ceiling:** Calculates the compression ratio:
+  $$\text{Ratio} = \frac{\sum \text{uncompressed\_file\_size}}{\text{compressed\_stream\_bytes}}$$
+  If $\text{Ratio} > 100:1$, the file is classified as a malicious decompression bomb and immediately dropped (`ERR_ZIP_BOMB_DETECTED`).
+
+### 5.4. Image URL Verification (`validate_image_url`)
 For scholarship card and hero images (`card_image_url`, `image_url`):
 * URL verified via `LinkValidator`.
 * Protocol strictly `http` or `https` (rejects base64 data URIs `data:image/...` to prevent database bloat and embedded payloads).
@@ -289,6 +298,7 @@ All exceptions raised by the security module inherit from `SecurityValidationErr
 | `ERR_SCHEMA_SHAPE_INVALID` | Schema Validation | LLM JSON returned invalid schema structure (Pydantic validation failure). |
 | `ERR_SELECTOR_SYNTAX_INVALID` | Selector Safety | Generated CSS selector fails compilation in soupsieve. |
 | `ERR_CSS_SELECTOR_REDOS_TIMEOUT`| ReDoS Prevention | CSS selector exceeded 200ms dry-run timeout (combinator backtracking bomb). |
+| `ERR_ZIP_BOMB_DETECTED` | Attachment Safety | File exceeded 100:1 compression ratio or 50MB uncompressed limit. |
 
 ---
 

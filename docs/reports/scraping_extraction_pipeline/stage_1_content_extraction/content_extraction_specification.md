@@ -14,6 +14,7 @@ Stage 1 is the **Data Extraction, Pulling & Template Management** engine of the 
   * Extracts scholarship featured image URLs (`image_url`) at both listing and detail levels.
   * Handles advanced platform quirks identified in Stage 0 (multi-tab scholarship panels and in-article pagination).
   * Enforces mandatory security gates (`src/modules/security/`): validates URLs via `LinkValidator`, sanitizes plain text and rich descriptions via `ContentSanitizer`, and validates image URLs and attachment streams via `FileValidator`.
+  * Operates under a strictly bounded **single-process sequential model** (`max_concurrent_crawls = 1`) with aggressive Chromium memory flags (`--disable-dev-shm-usage`, `--no-zygote`, `--disable-gpu`) keeping RAM footprint strictly under **300MB–450MB** for limited-memory hosting.
   * Persists extracted data into `raw_listings` and `raw_grant_details` with `status = "pending"`.
 * **What this stage DOES NOT do:**
   * It does **not** perform canonical taxonomy mapping (e.g. mapping "Postgraduate" to `EducationLevel` UUIDs).
@@ -264,6 +265,24 @@ $$\text{Field Success Rate} = \frac{\text{Successfully Extracted Fields}}{\text{
 * **Condition:** The page layout changed fundamentally (e.g. site switched from blog article layout to interactive web application layout).
 * **Protocol:** Triggers full schema synthesis via `crawl4ai.JsonCssExtractionStrategy.agenerate_schema`, runs the dry-run validation gate, and stores a new template in the pool as `v2.0`.
 * **Pool Management:** Each source retains a maximum of **4 to 6 active templates**. If a new template is added, the template with the lowest `hit_count` that has been inactive for >30 days is deprecated.
+
+### Case C: Statistical Schema Drift (Moving Average Fill-Rate Degradation)
+* **The Silent Partial Failure Risk:** A portal redesigns only its `stipend` or `deadline` section without altering the `title` or `apply_url`. Because mandatory fields still succeed, standard success rate remains $\ge 85\%$, masking the silent data loss indefinitely.
+* **Telemetry & Baseline:**
+  * For every active template, the engine maintains rolling field fill-rate metrics in `scraping_templates.field_metrics` across the last $N \ge 10$ extractions:
+    ```json
+    {
+      "title": 1.0,
+      "deadline": 0.95,
+      "stipend": 0.85,
+      "degree_levels": 0.90
+    }
+    ```
+* **Degradation Detection:**
+  * After each run, the engine computes the current extraction fill rate per field against its historical moving average baseline.
+  * If a non-mandatory field's fill rate drops by **$> 40\%$** (e.g. `stipend` suddenly plummets from $85\%$ to $10\%$ over the last batch):
+    * Flags `source_configs.drift_detected = true`.
+    * Automatically schedules an isolated **Soft-Drift Micro-Repair** (Case A) targeting that single degraded selector without waiting for human intervention or total template failure.
 
 ---
 

@@ -84,6 +84,7 @@ Stores multiple extraction schemas per source to handle layout rotation without 
 * `version: Int` — Incremental template version.
 * `is_active: Boolean` — Default `true`. Included in the matching candidate pool.
 * `hit_count: Int` — Number of times this template was successfully applied.
+* `field_metrics: Json?` — Rolling field fill-rate metrics (e.g. `{"title": 1.0, "stipend": 0.90}`) for statistical drift detection.
 * `last_successful_use_at: DateTime?`
 * `created_at: DateTime`
 * `updated_at: DateTime`
@@ -255,11 +256,15 @@ When an administrator registers a target URL in `sources`, Stage 0 autonomously 
 
 ---
 
-### Stage 2: Crawl4AI Core Crawling, Single-Browser Execution & Anti-Bot Defense
-1. **Single-Browser Memory Footprint (Backpressure Control):**
-   * To prevent memory bloat and Linux OOM kills, the scraper runs a **strictly bounded single browser process** (`max_concurrent_crawls = 1` by default).
-   * Multi-page and detail crawls are executed sequentially per worker.
-   * Configurable via `source_configs.max_concurrent_crawls` to allow horizontal expansion in future environments with higher RAM allocation.
+### Stage 2: Crawl4AI Core Crawling, Ultra-Low Memory Execution & Anti-Bot Defense
+1. **Ultra-Low Memory Single-Browser Architecture (Strict $\le 1$GB RAM Target):**
+   * To prevent memory bloat and Linux OOM kills on limited-memory servers, the crawler executes under a strictly bounded **single-process sequential model** (`max_concurrent_crawls = 1`).
+   * **Chromium RAM Minimization Flags:** Launches headless Chromium with aggressive memory-pruning flags:
+     * `--disable-dev-shm-usage`: Instructs Chromium to use `/tmp` rather than exhausting Docker's 64MB `/dev/shm`.
+     * `--no-zygote`: Prevents spawning the separate zygote process (saving ~80MB–100MB RAM).
+     * `--disable-gpu`, `--disable-extensions`, `--disable-background-networking`, `--disable-default-apps`, `--disable-sync`, `--no-first-run`: Purges all unnecessary browser subsystems.
+   * **Context Lifecycle & Garbage Collection:** A lightweight browser context is created per page request and **explicitly closed immediately** after DOM capture, with Python explicit garbage collection (`gc.collect()`) triggered to keep Chromium memory pegged strictly under **300MB–450MB**.
+   * **Zombie Process Reaping:** Container entrypoint utilizes `tini` / `init: true` to prevent dead renderer tabs from accumulating as zombie processes (`<defunct>`).
 2. **Anti-SSRF DNS Pinning:**
    * Browser instance launched with `--host-resolver-rules="MAP {domain} {resolved_ip}"` ensuring direct socket connection to the pre-validated public IP.
 3. **HTTP 429 & Rate Limit Backoff (`Retry-After` Adherence):**
@@ -279,7 +284,7 @@ When an administrator registers a target URL in `sources`, Stage 0 autonomously 
 
 ---
 
-### Stage 3: Multi-Template Pool Matching (Zero LLM Cost)
+### Stage 3: Multi-Template Pool Matching & Statistical Drift Telemetry
 > **Full Detailed Specification:** See [`stage_1_content_extraction/content_extraction_specification.md`](./stage_1_content_extraction/content_extraction_specification.md) for complete technical rules, soft-drift repair, image extraction, and multi-tab handling.
 
 When processing Level 1 (listing) or Level 2 (detail) HTML:
@@ -288,9 +293,12 @@ When processing Level 1 (listing) or Level 2 (detail) HTML:
    * **Gate 1 (Container):** Verifies `base_selector` exists in DOM.
    * **Gate 2 (Coverage):** Level 1 requires $\ge 1$ card with title and valid URL; Level 2 requires non-empty title and valid action link (`official_apply_url` or `source_url`).
    * **Gate 3 (Quality):** Text length between 5 and 250 characters with no raw HTML/script residue.
-3. **Outcome:**
+3. **Statistical Schema Drift Detection (Field Fill-Rate Degradation):**
+   * Updates rolling moving average fill-rates in `scraping_templates.field_metrics` across the last $N \ge 10$ runs (e.g. `{"title": 1.0, "deadline": 0.95, "stipend": 0.85}`).
+   * **Silent Drift Alert:** If a non-mandatory field's fill-rate drops by $> 40\%$ below its historical baseline (e.g., `stipend` suddenly drops from $85\%$ to $10\%$), flags `source_configs.drift_detected = true` and automatically dispatches a targeted Soft-Drift Micro-Repair (`v1.0` $\rightarrow$ `v1.1`) for that specific selector.
+4. **Outcome:**
    * **Match Found:** Increments `hit_count`, updates `last_successful_use_at`, extracts `image_url`, and proceeds with **zero LLM cost**.
-   * **Soft Drift Detected ($\ge 85\%$ fields valid):** Dispatches targeted Micro-Repair prompt to patch only the broken selector (`v1.0` $\rightarrow$ `v1.1`) using ~300 tokens without regenerating the entire template.
+   * **Soft Drift Detected ($\ge 85\%$ fields valid OR statistical drop):** Dispatches targeted Micro-Repair prompt to patch only the broken selector (`v1.0` $\rightarrow$ `v1.1`) using ~300 tokens without regenerating the entire template.
    * **Hard Drift Detected / All Fail:** Proceeds to Stage 4.
 
 ---
@@ -377,14 +385,15 @@ For each newly discovered `raw_listing`:
 7. **Application Link Verification (Anti-Fraud & Anti-SSRF Gate):**
    * Inspects external application links via `LinkValidator.validate_url()`: verifies public IP resolution (blocks SSRF to internal networks or AWS IMDS), follows redirects up to 5 hops, and halts circular loops.
    * Flags suspicious patterns (ad-shorteners, spam redirects, unencrypted HTTP submission portals). Supports `mailto:` and `tel:` alternative application channels.
-8. **AWS S3 Document / PDF Stream Downloader & Magic-Byte Gate:**
+8. **AWS S3 Document / PDF Stream Downloader, Magic-Byte & Zip-Bomb Gate:**
    * If the target application link points to a file (`Content-Type: application/pdf`, `.docx`, etc.):
-     1. Streams download via `FileValidator.download_and_validate_stream()` with a strict 25 MB cutoff.
+     1. Streams download via `FileValidator.download_and_validate_stream()` with a strict 25 MB stream limit.
      2. Verifies file signature magic bytes (`%PDF-`, `PK\x03\x04`), blocking disguised executables or scripts (`ERR_MALICIOUS_FILE_TYPE`).
-     3. Streams verified binary to AWS S3:
+     3. **Zip-Bomb Decompression Guard:** For zipped formats (DOCX, XLSX), inspects directory member metadata without full extraction: enforces a maximum uncompressed size $\le 50\text{MB}$ and a compression ratio $\le 100:1$ (`ERR_ZIP_BOMB_DETECTED`).
+     4. Streams verified binary to AWS S3:
         `s3://{BUCKET_NAME}/attachments/{source_id}/{sha256_hash}.pdf`
-     4. Sets `has_attachment = true`.
-     5. Saves S3 key, file size, mime-type, and SHA256 checksum in `attachment_metadata`.
+     5. Sets `has_attachment = true`.
+     6. Saves S3 key, file size, mime-type, and SHA256 checksum in `attachment_metadata`.
 
 ---
 
@@ -435,6 +444,7 @@ To prevent LLM billing waste on invalid content, the AI prompts enforce the foll
 | `ERR_SCHEMA_SHAPE_INVALID` | LLM JSON returned invalid schema structure (Pydantic failure)| Sends targeted correction prompt with exact validation error |
 | `ERR_SELECTOR_SYNTAX_INVALID` | Generated CSS selector fails compilation in soupsieve | Triggers single-selector micro-repair |
 | `ERR_CSS_SELECTOR_REDOS_TIMEOUT`| CSS selector exceeded 200ms dry-run timeout (combinator bomb)| Rejects selector, prompts LLM for simple non-backtracking class names |
+| `ERR_ZIP_BOMB_DETECTED` | Attachment Safety | Attachment exceeded 100:1 compression ratio or 50MB uncompressed limit | Rejects and discards attachment |
 
 ---
 
