@@ -42,6 +42,12 @@ testpaths = ["tests"]
 
 [tool.ruff]
 target-version = "py312"
+exclude = [
+    "scripts/scratch",
+    "backups",
+    ".venv",
+    ".scannerwork",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
@@ -53,6 +59,7 @@ ignore = ["E501"]
 [tool.black]
 target-version = ["py312"]
 line-length = 88
+extend-exclude = "^/(scripts/scratch|backups|\\.scannerwork)/"
 
 [[tool.mypy.overrides]]
 module = ["dateparser", "bs4", "asyncpg"]

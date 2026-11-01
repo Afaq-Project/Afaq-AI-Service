@@ -1,0 +1,61 @@
+{
+  "consumer": {
+    "name": "afaq-main-service"
+  },
+  "provider": {
+    "name": "afaq-ai-service"
+  },
+  "interactions": [
+    {
+      "description": "a health check query to check service and database status",
+      "providerState": "service and database are healthy",
+      "request": {
+        "method": "GET",
+        "path": "/health"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "status": "ok",
+          "database": "connected"
+        }
+      }
+    },
+    {
+      "description": "a notification that scraping has completed",
+      "providerState": "valid API key and valid scrape complete payload",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/webhook/scrape-complete",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-API-Key": "test-key"
+        },
+        "body": {
+          "batch_id": "batch-12345",
+          "total_opportunities": 10,
+          "succeeded_sources": ["https://almin7.com"],
+          "failed_sources": []
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "status": "received",
+          "batch_id": "batch-12345"
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "pactSpecification": {
+      "version": "2.0.0"
+    }
+  }
+}
