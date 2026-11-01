@@ -1,98 +1,154 @@
 <!--
 Sync Impact Report:
-- Version change: Unversioned Template -> v1.0.0
-- Bump Rationale: Initial ratification of the project constitution establishing core principles, operational constraints, security boundaries, and engineering standards for Afaq-AI-Service.
+- Version change: v1.0.0 -> v2.0.0
+- Bump Rationale: Major governance overhaul aligning the Constitution specifically with SpecKit requirements engineering, feature planning artifacts, task decomposition, and human review prioritization, while eliminating redundancies with AGENT.md.
 - Modified Principles:
-  - PRINCIPLE_1: Replaced template with "I. Zero-Trust Security & Ingestion Isolation (NON-NEGOTIABLE)"
-  - PRINCIPLE_2: Replaced template with "II. Ultra-Low Memory & Single-Browser Bounded Execution"
-  - PRINCIPLE_3: Replaced template with "III. Autonomous Multi-Template Reusability & Zero-Cost Matching"
-  - PRINCIPLE_4: Replaced template with "IV. Strict Separation of Raw Extraction and Downstream Cleaning"
-  - PRINCIPLE_5: Replaced template with "V. Operational Resilience, Loop Traps & Concurrency Control"
+  - Focused Core Domain Invariants on public data integrity, low-memory bounds, and ingestion isolation.
 - Added Sections:
-  - Technology Stack & Architectural Constraints
-  - Testing Philosophy & Quality Standards
-- Removed Sections: None
+  - Mandatory 8-Artifact Feature Lifecycle (spec.md, endpoints.md, use_cases.md, plan.md, test_plan.md, security.md, tasks.md, review_priorities.md).
+  - Requirements & User Story Standards.
+  - Test-Driven Development (TDD) Drift Prevention Mandate.
+  - Human Review Priority Framework (Tier 1 Critical to Tier 4 Low).
+  - Pre-Implementation Specification Approval Gate.
+- Removed Sections:
+  - Removed duplicate "Technology Stack & Architectural Constraints" (delegated to AGENT.md).
+  - Removed duplicate "Testing Philosophy & Quality Standards" (delegated to AGENT.md).
 - Follow-up TODOs: None
 -->
 
 # Afaq-AI-Service Constitution
 
-## Core Principles
+## 1. Governance Purpose & Scope Guard
 
-### I. Zero-Trust Security & Ingestion Isolation (NON-NEGOTIABLE)
-Every external URL, incoming HTTP response, DOM payload, and binary attachment MUST traverse the mandatory `src/modules/security/` gateway prior to processing or persistence:
-* **Network & SSRF Guard:** All URLs MUST pass RFC 3986 syntax validation, private/internal IP filtering (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, link-local, cloud metadata `169.254.169.254`), and 5-hop redirect loop traps. Chromium MUST bind to pre-screened public IPs via `--host-resolver-rules` to prevent DNS rebinding.
-* **Content Sanitization:** Plain-text fields MUST be stripped of all HTML/script tags. Rich description fields MUST be sanitized using Rust-backed `nh3`. Untrusted web content passed to LLMs MUST be isolated inside `<untrusted_web_content>` boundaries.
-* **Selector ReDoS Protection:** Generated CSS selectors MUST NOT exceed length 300, `:has()` depth 1, or 5 combinators. Candidate selectors MUST pass a 200ms dry-run timeout gate before adoption.
-* **Attachment Verification:** Downloads MUST be validated via magic bytes, streamed with a 25MB cutoff, and scanned for Zip-bomb characteristics (max 50MB uncompressed, max 100:1 ratio ceiling).
+This Constitution serves as the authoritative governance document for **requirements engineering, architectural planning, task decomposition, and feature delivery** handled by SpecKit and AI agents on **Afaq-AI-Service**.
 
-### II. Ultra-Low Memory & Single-Browser Bounded Execution
-The service MUST operate reliably on resource-constrained servers ($\le 1$GB RAM container boundary) running FastAPI alongside headless Chromium:
-* **Single-Process Constraint:** Crawling concurrency MUST be bounded to `max_concurrent_crawls = 1`. Concurrent browser instances are strictly forbidden unless horizontal worker scaling is explicitly configured.
-* **Chromium Memory Flags:** Chromium MUST launch with `--disable-dev-shm-usage`, `--no-zygote`, `--disable-gpu`, `--disable-extensions`, `--disable-background-networking`, and `--no-first-run`.
-* **Resource Reclamation:** Browser contexts and pages MUST be explicitly closed per request with proactive garbage collection (`gc.collect()`). Zombie process reaping MUST be handled via container init (`tini`).
-* **Build Isolation:** Running `docker build` locally is strictly forbidden; container packaging is reserved exclusively for CI workflows.
+* **Separation of Concerns:**
+  * General development workflows, static analysis tooling commands, binary locations, and pre-commit security pipelines are governed exclusively by [`AGENT.md`](file:///home/abood/Project/Afaq/Afaq-AI-Service/AGENT.md).
+  * Feature planning, requirement specifications, test-driven designs, task structures, and human review governance are governed exclusively by this **Constitution**.
 
-### III. Autonomous Multi-Template Reusability & Zero-Cost Matching
-The extraction engine MUST minimize latency and operational AI billing waste by caching and reusing declarative CSS schemas:
-* **Deterministic Matching:** Pages MUST be tested against the existing `scraping_templates` pool (3-gate matching: structural anchor, non-empty title, $\ge 1$ action link) before calling any LLM. Successful pool matches MUST execute at zero LLM cost.
-* **4-Stage Synthesis Pipeline:** When template synthesis is required, candidate schemas MUST pass Stage A (Syntax/Truncation), Stage B (Pydantic structural shape with `strict=True`, `extra="forbid"`), Stage C (CSS ReDoS complexity linting), and Stage D (200ms dry-run execution gate).
-* **Soft-Drift Tracking:** The engine MUST track rolling `field_metrics` fill-rates. If a non-mandatory field drops $> 40\%$ below historical baselines, a targeted micro-repair MUST fix the isolated selector without discarding the template.
+---
 
-### IV. Strict Separation of Raw Extraction and Downstream Cleaning
-The scraping engine is purely a high-fidelity producer of unmutated raw content:
-* **No Premature Mutation:** Raw extraction tables (`raw_listings`, `raw_grant_details`) MUST store publisher text in its native form. The scraping engine MUST NOT attempt canonical taxonomy mapping, fuzzy heuristics, or premature translation.
-* **Multilingual Lineage:** Detail pages published in dual languages (e.g., Arabic and English) MUST be linked via `opportunity_group_id: UUID`. Statistical language classification (`py3langid`) MUST tag native ISO 639-1 codes (`title_language`, `body_language`, `language_confidence`).
-* **Downstream Responsibility:** Normalization of fields of study, funding types, study levels, and translation of foreign third-party content are strictly delegated to downstream cleaning pipelines.
+## 2. Mandatory 8-Artifact Feature Lifecycle
 
-### V. Operational Resilience, Loop Traps & Concurrency Control
-The scraping lifecycle MUST be self-healing, polite, and resistant to infinite crawl traps:
-* **Distributed Locks:** Concurrent crawling of the same source MUST be prevented using atomic check-and-set database locks (`is_locked`, `locked_at` with a 30-minute auto-expiry threshold).
-* **Rate Limits & Cool-Down:** Host `Crawl-delay` and HTTP 429 `Retry-After` headers MUST be strictly honored. Delay $> 300$s MUST place the source in `cool_down_until` and release the lock immediately.
-* **Lookahead Pagination Cutoff:** Catalog traversal MUST employ a 2-page Lookahead Window (`consecutive_existing_pages >= 2`) to tolerate pinned or sponsored listings. Cutoff MUST automatically disengage if `ordering_strategy != "chronological_descending"`.
-* **Content Fingerprint Loop Traps:** Pagination loops MUST be intercepted via SHA256 Content Fingerprints of normalized titles and URLs, comparing Page $N$ to Page $N-1$ (stagnant) and Page 1 (circular).
-* **Database Dead-Letter Queue:** Failures MUST be recorded with structured error codes. Records exceeding `max_retries = 3` MUST be flagged as `failed_permanently` for DLQ triage.
+Before writing any application or service code for any feature or major enhancement, the AI agent and SpecKit **MUST** generate a dedicated feature directory containing exactly eight structured governance artifacts:
 
-## Technology Stack & Architectural Constraints
+```
+specs/<feature-name>/
+├── 1. spec.md               # Functional requirements & user stories
+├── 2. endpoints.md          # Complete API and webhook contracts
+├── 3. use_cases.md          # Primary, edge, and worst-case failure scenarios
+├── 4. plan.md               # Phased technical implementation blueprint
+├── 5. test_plan.md          # TDD test specifications linked 1-to-1 to use cases
+├── 6. security.md           # Pre-code threat modeling & sanitization strategy
+├── 7. tasks.md              # Consolidated, dependency-ordered task breakdown
+└── 8. review_priorities.md  # Human oversight priority matrix (Critical to Low)
+```
 
-* **Modular Monolith & Layer Separation:**
-  * `src/api/routes/`: Thin controllers handling authentication, status codes, and routing. No direct DB queries.
-  * `src/modules/*/services/`: Pure business workflows independent of transport protocols.
-  * `src/modules/*/repositories/`: Encapsulated database persistence via Prisma Client Python or `asyncpg`.
-  * `src/modules/infrastructure/`: External integrations (HTTP, S3, Webhooks, LLM APIs).
-  * `src/modules/security/`: Mandatory zero-trust validation and sanitization gatekeeper.
-* **Database & Migration Policy:**
-  * Schema managed via `prisma/schema.prisma`.
-  * Application queries MUST use `url` (PgBouncer pooled connection).
-  * Migrations and schema synchronization MUST use `directUrl` (direct port 5432) to prevent transaction-pooler deadlocks.
-* **REST & Webhook Conventions:**
-  * All endpoints MUST enforce explicit Pydantic response models.
-  * Long-running operations MUST return `202 Accepted` with `operation_id` and execute in background tasks, delivering final telemetry via authenticated webhooks.
+### Artifact Specifications & Standards:
 
-## Testing Philosophy & Quality Standards
+#### 1. Specification File (`spec.md`)
+* **Purpose:** Defines the complete functional scope, user stories, and acceptance criteria.
+* **Requirements:**
+  * Must follow industry best practices for requirements engineering.
+  * Every requirement must include: User Persona, User Story (`As a... I want to... So that...`), Technical Rationale, and Measurable Acceptance Criteria formatted in unambiguous `Given-When-Then` notation.
+  * Must explicitly declare **Non-Goals & Out-of-Scope Boundaries** to prevent scope creep.
 
-* **Value-Driven, High-Signal Testing:**
-  * Unit tests MUST target core domain algorithms, security gates, edge boundaries, and repository data contracts.
-  * Anti-patterns strictly banned: testing framework boilerplate, trivial getters/models, and hollow over-mocking.
-* **Deterministic Execution & Performance Ceiling:**
-  * The entire unit test suite MUST execute in **under 15 seconds** locally (`uv run pytest tests/`).
-  * Unit tests MUST NEVER make live network, external database, or third-party API calls.
-* **Static Analysis & Tooling:**
-  * Package management strictly managed via `uv`.
-  * Code MUST pass `uv run ruff check` and `uv run black --check` prior to commit.
-  * Strict type hints required for all public interfaces.
-* **Documentation Standards:**
-  * All engineering and architectural reports MUST reside in `docs/reports/<purpose>/` accompanied by `metadata.md`.
+#### 2. Endpoints Contract File (`endpoints.md`)
+* **Purpose:** Concrete, unambiguous specification of every new or modified API route and webhook.
+* **Requirements:**
+  * HTTP Method, full route path, and route description.
+  * Authentication and authorization requirements (API key header, roles).
+  * Detailed Request Specification: Query parameters, path parameters, and full Pydantic request models with types and field validations.
+  * Detailed Response Specification: Standard response envelopes (`status`, `data`, `message`), HTTP status codes (`200`, `201`, `202`, etc.).
+  * Error Catalog: Complete table of expected error status codes (`400`, `401`, `403`, `404`, `422`, `500`), error conditions, and exact error detail payloads.
 
-## Governance
+#### 3. Use Cases & Scenarios File (`use_cases.md`)
+* **Purpose:** Maps out the behavioral spectrum of the feature before implementation.
+* **Requirements:**
+  * **Primary (Happy Path) Scenarios:** Standard end-to-end execution flow.
+  * **Edge Cases:** Null/omitted optional values, boundary numerical limits, unexpected unicode/multilingual characters, empty arrays, duplicate entries.
+  * **Worst-Case & Failure Scenarios:** Network timeouts, upstream third-party service failures, invalid schemas, database locks, and malformed HTML payloads.
+  * Each scenario must document: Preconditions, Trigger, Expected System Behavior, and Postconditions.
 
-This Constitution acts as the supreme technical and architectural agreement for **Afaq-AI-Service**. All pull requests, code modifications, and automated agent plans MUST verify compliance against these non-negotiable principles.
+#### 4. Execution Plan File (`plan.md`)
+* **Purpose:** Phased technical implementation plan generated by SpecKit.
+* **Requirements:**
+  * Architectural breakdown into logical phases (Data Models, Repositories, Core Domain Services, Security Gates, API Controllers).
+  * Explicit dependency graph showing which components must be built first.
+  * Rollback and contingency strategies for complex schema or contract changes.
 
-* **Amendment Procedure:** Amendments require explicit justification, impact assessment, and documentation updates.
+#### 5. Test Plan File (`test_plan.md`)
+* **Purpose:** Drives Test-Driven Development (TDD) to prevent architectural drift.
+* **Requirements:**
+  * **1-to-1 Mapping:** Every single use case and scenario from `use_cases.md` MUST have an associated test case explicitly specified in this plan.
+  * **Test Categorization:** Unit tests, integration tests, contract tests (Pact), and architectural fitness tests (ArchUnit).
+  * **TDD Enforcement:** Tests must be authored *before* feature code (Red-Green-Refactor). Tests act as guardrails that prevent deviations from the specification before code is created.
+
+#### 6. Security Analysis & Strategy File (`security.md`)
+* **Purpose:** Proactive, pre-implementation threat modeling and mitigation design.
+* **Requirements:**
+  * Identifies potential security vectors during the design stage (SSRF, Injection, ReDoS, XSS in scraped content, unauthorized data access).
+  * Explicit Sanitization Strategy: Specifies exact input cleaning rules, Rust-backed `nh3` HTML scrubbing, and data masking.
+  * Authentication & Permission Gates: Documents required API keys, headers, and access restrictions.
+  * Automated Security Test Cases: Defines the negative tests and fuzz cases that must be executed to verify the security mitigations.
+
+#### 7. Task List File (`tasks.md`)
+* **Purpose:** The structured execution roadmap consolidating all prior artifacts into atomic tasks.
+* **Requirements:**
+  * Must consolidate inputs from `spec.md`, `endpoints.md`, `use_cases.md`, `plan.md`, `test_plan.md`, and `security.md`.
+  * Tasks must be atomic, dependency-ordered, and sequenced sequentially.
+  * Each task must declare: Task ID, Description, Target Files, Prerequisite Tasks, and Verification Command.
+
+#### 8. Human Review Priority File (`review_priorities.md`)
+* **Purpose:** Explicit ranking of tasks to guide human oversight and review efficiency.
+* **Requirements:**
+  * Categorizes every task from `tasks.md` into one of four review tiers:
+    * **Tier 1 (Critical Review):** Security sanitization gates, authentication boundaries, raw database schema migrations, and external ingestion points. Must receive rigorous human review before merging.
+    * **Tier 2 (High Review):** Core business logic, extraction algorithms, contract changes (Pact), and new API route handlers.
+    * **Tier 3 (Medium Review):** Internal service refactoring, repository queries, error handling, and performance tuning.
+    * **Tier 4 (Low Review):** Boilerplate code, unit test fixtures, documentation, type annotations, and lint formatting.
+  * Lists tasks in descending order of oversight necessity so the human reviewer knows exactly which outputs to inspect first.
+
+---
+
+## 3. Spec-Driven Quality & Execution Principles
+
+### Principle I: Zero Premature Implementation (Specification Gate)
+* **Rule:** The AI agent and developers are **strictly prohibited** from writing application source code, feature routes, database queries, or domain logic until all eight mandatory planning artifacts are generated, cross-referenced, and **explicitly approved by the user**.
+* **Rationale:** Writing code prior to detailed specification leads to architectural drift, rework, wasted context, and unreviewed assumptions.
+
+### Principle II: Strict Bi-Directional Traceability
+* **Rule:** Every functional task in `tasks.md` MUST cite its origin requirement in `spec.md`, its target use case in `use_cases.md`, and its verifying test in `test_plan.md`.
+* **Zero Orphan Tasks:** Tasks that do not tie directly back to an approved requirement or test case are strictly forbidden.
+
+### Principle III: Test-Driven Drift Prevention
+* **Rule:** Implementation of every distinct functional unit MUST follow the Red-Green-Refactor cycle. Test cases defined in `test_plan.md` must be instantiated first, run to verify expected failure (Red), satisfied with minimal clean code (Green), and verified across static analysis and security tools.
+* **Rationale:** Tests are not mere audit checks after the fact; they actively steer implementation code and prevent unauthorized behavioral drift.
+
+### Principle IV: Specification Immutability During Execution
+* **Rule:** Once the 8 planning artifacts are approved, the agent cannot alter feature scope or silently rewrite specifications during execution.
+* **Amendment Protocol:** If technical blockers or edge cases discovered during implementation require altering the specification, the agent must pause, document the required amendment, and obtain explicit user consent before proceeding.
+
+---
+
+## 4. Non-Negotiable Core Domain Invariants
+
+Regardless of feature scope, all feature specifications and plans MUST uphold the service's foundational operational constraints:
+
+* **Public Data Only & Zero Paywall Bypass:** Afaq-AI-Service collects exclusively publicly accessible educational grant and scholarship listings. Automated bypassing of authentication paywalls, CAPTCHAs, or access controls is strictly prohibited.
+* **Zero-Trust Ingestion Isolation:** Every scraped string, URL, and attachment MUST traverse the `src/modules/security/` gateway (RFC 3986 URL parsing, SSRF private IP blocking, ReDoS selector checks, and `nh3` HTML sanitization) before persistence.
+* **Single-Browser Low-Memory Bound:** Crawling operations MUST operate within a single-process concurrency ceiling (`max_concurrent_crawls = 1`) and adhere to the $\le 1$GB container RAM limit.
+* **Raw vs. Cleaning Separation:** Raw extraction tables store unmutated publisher text. Canonical taxonomy normalization and translation are strictly reserved for downstream pipeline modules.
+
+---
+
+## 5. Governance & Versioning
+
+* **Authority:** This Constitution is the binding governance agreement for all SpecKit workflows and agent planning activities on **Afaq-AI-Service**.
 * **Versioning Policy:**
-  * **MAJOR (X.0.0):** Breaking governance changes, principle removals, or redefinitions.
-  * **MINOR (1.X.0):** Addition of new principles, architectural sections, or materially expanded guidelines.
-  * **PATCH (1.0.X):** Clarifications, wording refinements, and non-semantic corrections.
-* **Compliance Checks:** Any technical deviation or proposed exception MUST be documented with explicit justification and approved before implementation.
+  * **MAJOR (X.0.0):** Governance restructuring, changes to the mandatory artifact set, or principle removals.
+  * **MINOR (1.X.0):** Addition of new governance guidelines, review tiers, or expanded artifact standards.
+  * **PATCH (1.0.X):** Wording clarifications, template formatting, and non-semantic corrections.
+* **Review Cycle:** The constitution must be verified against delivered features at the completion of each major track.
 
-**Version**: 1.0.0 | **Ratified**: 2026-11-01 | **Last Amended**: 2026-11-01
+**Version**: 2.0.0 | **Ratified**: 2026-11-01 | **Last Amended**: 2026-11-01
