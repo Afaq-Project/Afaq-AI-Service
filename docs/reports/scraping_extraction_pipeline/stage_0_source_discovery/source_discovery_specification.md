@@ -9,8 +9,8 @@ Stage 0 is the **Zero-Configuration Onboarding & Architectural Mapping** phase o
   * Validates network reachability and SSL security of the administrator-provided URL.
   * Crawls the platform entry-point using `crawl4ai` in stealth headless mode.
   * Strips away page noise, text bodies, and redundant elements to create a lean structural DOM skeleton.
-  * Uses AI with a strict content-relevance gate to map the platform’s navigation hierarchy, determine supported languages, pinpoint where the opportunity catalog resides (`catalog_url`), and deduce pagination mechanics.
-  * Executes a conditional 2nd-hop crawl if the entry URL was a portal homepage to lock in pagination rules.
+  * Uses AI with a strict content-relevance gate to map the platform’s navigation hierarchy, determine supported languages, pinpoint where the opportunity catalog resides (`catalog_url`), deduce pagination mechanics, and detect advanced layout patterns (multi-tab articles and multi-page single scholarship layouts).
+  * Executes a conditional 2nd-hop crawl if the entry URL was a portal homepage to lock in pagination rules and inspect detail page rendering patterns.
   * Populates the decoupled `source_configs` table.
 * **What this stage DOES NOT do:**
   * It does **not** extract individual scholarship cards or listings.
@@ -119,14 +119,20 @@ The structural skeleton is provided to Gemini Flash with a strictly typed JSON o
 5. **Pagination & Mechanics:**
    * Deduces `pagination_type`: `url_param` (`?page=`), `path_param` (`/page/2/`), `next_button`, `infinite_scroll`, or `none`.
    * Recommends a `wait_for_selector` (e.g., `main.content` or `.post-listing`).
+6. **Multi-Tab Single-Scholarship Detection:**
+   * Inspects whether the CMS organizes opportunity details across client-side tabs (e.g., Bootstrap `.nav-tabs`, Elementor `.elementor-tabs`, or `[role="tab"]`).
+   * If detected, flags `has_multi_tab_details: true` and identifies `tab_container_selector: String?` (e.g., `.elementor-tab-title, .nav-tabs a`).
+7. **Multi-Page Detail Article Detection:**
+   * Checks if single scholarship articles are paginated across sub-pages (e.g., WordPress `<!--nextpage-->`, `.page-links a`, or `.post-pagination`).
+   * If detected, flags `has_multi_page_details: true` and identifies `subpage_pagination_selector: String?`.
 
 ### Step 5: Conditional 2nd-Hop Crawl (Catalog Verification)
 * **Condition Check:**
   * If the entry URL already contained the active catalog and pagination controls: **Skip Step 5 (1 crawl total).**
   * If the entry URL was a portal root homepage (e.g., `https://almin7.com`) and the AI discovered a dedicated `catalog_url` (e.g., `https://almin7.com/scholarship/`):
     1. Crawl4AI performs **one additional crawl** on `catalog_url`.
-    2. The DOM is skeletonized to verify pagination controls (`?page=`, `.pagination a.next`).
-    3. Locks in the final `pagination_type` and `pagination_config`.
+    2. The DOM is skeletonized to verify pagination controls (`?page=`, `.pagination a.next`) and inspect sample cards.
+    3. Locks in the final `pagination_type`, `pagination_config`, and verifies if tabbed/multi-page structures are present.
 * **Cap:** Maximum 2 crawls total for the entire discovery stage. Never crawls detail articles or auxiliary pages.
 
 ### Step 6: Database Persistence (`source_configs`)
@@ -145,6 +151,10 @@ INSERT INTO source_configs (
     wait_for_selector,
     page_timeout_sec,
     max_pages_per_run,
+    has_multi_tab_details,
+    tab_container_selector,
+    has_multi_page_details,
+    subpage_pagination_selector,
     drift_detected,
     consecutive_failures,
     created_at,
@@ -161,6 +171,10 @@ INSERT INTO source_configs (
     :wait_for_selector,
     30,
     10,
+    :has_multi_tab_details,
+    :tab_container_selector,
+    :has_multi_page_details,
+    :subpage_pagination_selector,
     false,
     0,
     NOW(),

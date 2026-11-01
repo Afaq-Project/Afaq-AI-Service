@@ -52,6 +52,10 @@ Populated and maintained autonomously by the engine:
 * `wait_for_selector: String?` — Specific DOM element Crawl4AI waits for before parsing.
 * `page_timeout_sec: Int` — Max navigation timeout (default: 30s).
 * `max_pages_per_run: Int` — Max listing pages to traverse per job (default: 10).
+* `has_multi_tab_details: Boolean` — Default `false`. Discovered in Stage 0 if detail pages use tabs.
+* `tab_container_selector: String?` — Discovered selector for tab headers (e.g. `.nav-tabs a`).
+* `has_multi_page_details: Boolean` — Default `false`. Discovered if detail articles span sub-pages.
+* `subpage_pagination_selector: String?` — Discovered selector for in-article subpage pagination.
 * `drift_detected: Boolean` — Default `false`. Flagged when extraction yields collapse.
 * `consecutive_failures: Int` — Counter triggering administrative alerts.
 * `last_scraped_at: DateTime?`
@@ -97,6 +101,7 @@ Records discovered scholarship cards from catalog pages:
 * `discovered_url: String` — Direct link to the opportunity detail page.
 * `card_title_preview: String?` — Title snippet from the catalog card.
 * `card_snippet_preview: String?`
+* `card_image_url: String?` — Discovered card thumbnail image URL.
 * `listing_page_url: String` — Paginated URL where this card was discovered.
 * `status: String` — `pending_detail_crawl`, `details_extracted`, `failed`.
 * `scraped_at: DateTime`
@@ -111,7 +116,9 @@ Stores complete, uncleaned scholarship data and verification results:
 * `source_id: UUID (FK)` — References `sources.id`.
 * `template_id: UUID? (FK)` — References `scraping_templates.id` used for extraction.
 * `source_url: String` — Scholarship detail URL.
+* `template_version: Int` — Version number of the template used for extraction (e.g. 1.0, 1.1).
 * `raw_payload: Json` — Structured raw extraction (title, university, funding, eligibility, deadline).
+* `image_url: String?` — Featured / hero scholarship image URL.
 * `detected_language: String` — `ar` or `en`.
 * `link_verification_status: String` — `verified`, `suspicious`, `unreachable`, `s3_download`.
 * `final_application_url: String?` — Resolved destination URL after redirects.
@@ -218,17 +225,18 @@ When an administrator registers a target URL in `sources`, Stage 0 autonomously 
 ---
 
 ### Stage 3: Multi-Template Pool Matching (Zero LLM Cost)
+> **Full Detailed Specification:** See [`stage_1_content_extraction/content_extraction_specification.md`](./stage_1_content_extraction/content_extraction_specification.md) for complete technical rules, soft-drift repair, image extraction, and multi-tab handling.
+
 When processing Level 1 (listing) or Level 2 (detail) HTML:
 1. The engine retrieves **all active templates** for this source from `scraping_templates` ordered by `hit_count DESC`.
-2. **Fast Evaluation Gate:**
-   * Iterates through candidate templates without invoking AI.
-   * Runs `JsonCssExtractionStrategy(schema=template_schema)` on the current HTML.
-   * Verifies critical fields:
-     * Level 1: `base_selector` yields $\ge 1$ item, and items contain a valid URL.
-     * Level 2: Mandatory fields (`title` and `application_url` / `source_url`) are present.
+2. **Fast Evaluation Gate (3-Gate Deterministic Test):**
+   * **Gate 1 (Container):** Verifies `base_selector` exists in DOM.
+   * **Gate 2 (Coverage):** Level 1 requires $\ge 1$ card with title and valid URL; Level 2 requires non-empty title and valid action link (`official_apply_url` or `source_url`).
+   * **Gate 3 (Quality):** Text length between 5 and 250 characters with no raw HTML/script residue.
 3. **Outcome:**
-   * **Match Found:** Increments `hit_count`, updates `last_successful_use_at`, and immediately proceeds with the extracted data. This handles platforms alternating across 2–4 layouts with zero LLM overhead.
-   * **All Fail:** Proceeds to Stage 4.
+   * **Match Found:** Increments `hit_count`, updates `last_successful_use_at`, extracts `image_url`, and proceeds with **zero LLM cost**.
+   * **Soft Drift Detected ($\ge 85\%$ fields valid):** Dispatches targeted Micro-Repair prompt to patch only the broken selector (`v1.0` $\rightarrow$ `v1.1`) using ~300 tokens without regenerating the entire template.
+   * **Hard Drift Detected / All Fail:** Proceeds to Stage 4.
 
 ---
 
