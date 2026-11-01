@@ -265,14 +265,19 @@ Triggered only when no existing template in the pool matches the current layout:
    * **URL Query Parameters (`page` & `limit`):** Iterates `?page=N`. Where supported, passes `&limit=50` (or `per_page=50`) to expand page size, reducing required network calls by **5x–10x**.
    * **Path Parameters:** Formats URL via `/scholarships/page/{page}/`.
    * **Next-Button DOM Selector:** Follows `.pagination a.next, a[rel="next"]`.
-   * **Safeguarded Stop Conditions:** Automatically halts when empty cards are detected consecutively, when pagination loops back to page 1, or when all cards on the page already exist in the database (incremental crawl cutoff).
-2. Discovered links and card thumbnails are upserted into `raw_listings`:
+2. **The 5 Deterministic Catalog Termination & Cutoff Signals:**
+   * **DOM Next-Button Absence / Disabled:** The next-button link disappears or bears attributes like `disabled` or `.disabled`.
+   * **Zero-Yield State (Empty Catalog):** Container returns 0 cards (`len(cards) == 0`) with empty state indicators.
+   * **Circular Redirect & Duplicate Fingerprint (CMS Trap):** Detects silent WordPress loops where page $N$ redirects to or repeats page 1 cards.
+   * **HTTP 404 / 410 Response:** Server indicates page index out-of-bounds.
+   * **Incremental Database Cutoff (No NEW Content):** If 100% of the cards on Page $N$ already exist in `raw_listings`, halts traversal early (under 15 seconds for recurring crawls), skipping older historical pages.
+3. Discovered links and card thumbnails are upserted into `raw_listings`:
    ```sql
    INSERT INTO raw_listings (operation_id, source_id, discovered_url, card_title_preview, card_image_url, listing_page_url, status)
    VALUES (...)
    ON CONFLICT (source_id, discovered_url) DO NOTHING;
    ```
-3. Guarantees idempotency—existing scholarships are not re-queued unnecessarily.
+4. Guarantees idempotency—existing scholarships are not re-queued unnecessarily.
 
 ---
 

@@ -94,7 +94,29 @@ Level 1 catalog crawling traverses all available opportunity cards using the pag
 4. **Next-Button DOM Link:**
    * Crawl4AI extracts the `href` attribute from `.pagination a.next, a[rel="next"]`.
 
-### B. Execution Loop & Safeguarded Stop Conditions:
+### B. The 5 Deterministic Catalog Termination & Cutoff Signals:
+The engine identifies that it has reached the end of the catalog and that no further new content exists through five automated signals:
+
+1. **DOM Next-Button Absence / Disabled State:**
+   * For platforms using next-button traversal, Crawl4AI checks the selector configured in `pagination_config.selector` (e.g., `.pagination a.next`).
+   * On the final page, this element either completely disappears from the DOM (`0` elements found) or bears disabled attributes/classes (`disabled`, `aria-disabled="true"`, `.disabled`, `.page-nav-end`). Traversal stops immediately.
+2. **Zero-Yield State (Empty Catalog Container):**
+   * For URL parameter pagination (`?page=15` when only 14 pages exist), the server returns HTTP 200, but the list container yields zero opportunity cards (`len(soup.select(base_selector)) == 0`).
+   * The DOM often displays empty-state markers (e.g., *"No opportunities found"*, *"لا توجد نتائج"*). Traversal halts after this confirmation.
+3. **Circular Redirect & Duplicate Page Fingerprinting (The CMS Loop Trap):**
+   * Many platforms (particularly WordPress) do not return an error when you exceed the last page; instead, they silently redirect back to **Page 1** or repeat the contents of the last valid page.
+   * **Detection:** The engine tracks an in-memory set of the URLs extracted on Page 1 (`first_page_card_urls`).
+   * If Page $N$ returns cards whose URLs are **100% identical** to Page 1 or identical to Page $N-1$, the engine flags a circular loop trap and terminates catalog crawling.
+4. **HTTP 404 / 410 Response Codes:**
+   * Platforms using path pagination (`/scholarships/page/15/`) often return `HTTP 404 Not Found` or `410 Gone` when the page index is exceeded.
+   * The crawler treats 404 on page $N > 1$ as a normal catalog termination signal, closing the loop cleanly.
+5. **Incremental Database Cutoff (Detecting No "NEW" Content):**
+   * Scholarship listings are almost universally ordered chronologically (`newest first`).
+   * During recurring scheduled runs, the engine checks whether all opportunity links discovered on Page $N$ already exist in `raw_listings`.
+   * If **100% of the cards on Page $N$ are already in the database**, all subsequent pages ($N+1$, $N+2$) contain even older historical records that were already ingested in past runs.
+   * Traversal halts early, typically completing a recurring crawl in under 15 seconds.
+
+### C. Execution Loop Code Implementation:
 ```python
 current_page = pagination_config.get("start_page", 1)
 max_pages = source_configs.max_pages_per_run or 10
@@ -109,21 +131,21 @@ while current_page <= max_pages:
     cards = extract_level_1_listings(url, level_1_template)
     card_urls = {c["discovered_url"] for c in cards}
     
-    # 3. Stop Condition: End of Catalog (Empty Yield)
+    # 3. Stop Signal: Zero-Yield (Empty Catalog)
     if len(cards) == 0:
         consecutive_empty_pages += 1
         if consecutive_empty_pages >= 2:
+            logger.info("Catalog container empty on page %d; reached catalog end.", current_page)
             break
             
-    # 4. Stop Condition: Redirect Loop / Circular Pagination
+    # 4. Stop Signal: Circular Redirect / Duplicate Fingerprint
     if current_page == 1:
         first_page_card_urls = card_urls
     elif card_urls == first_page_card_urls:
         logger.info("Page %d redirected to page 1; terminating catalog crawl.", current_page)
         break
         
-    # 5. Stop Condition: Incremental Crawl Optimization
-    # If all cards on the page already exist in raw_listings, stop crawling older pages
+    # 5. Stop Signal: Incremental Crawl Cutoff (No NEW Content)
     if all_cards_already_in_db(card_urls, source_id):
         logger.info("All cards on page %d are already in DB; stopping incremental crawl.", current_page)
         break
