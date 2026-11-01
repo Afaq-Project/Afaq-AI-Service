@@ -112,6 +112,7 @@ Records discovered scholarship cards from catalog pages:
 Stores complete, uncleaned scholarship data and verification results:
 * `id: UUID (PK)`
 * `listing_id: UUID? (FK)` — References parent `raw_listings.id`.
+* `opportunity_group_id: UUID?` — Shared UUID linking corresponding Arabic and English versions of the same opportunity.
 * `operation_id: UUID (FK)` — References `scrape_operations.id`.
 * `source_id: UUID (FK)` — References `sources.id`.
 * `template_id: UUID? (FK)` — References `scraping_templates.id` used for extraction.
@@ -261,12 +262,13 @@ Triggered only when no existing template in the pool matches the current layout:
 
 ### Stage 5: Dynamic Pagination & Full Catalog Traversal
 1. Reads `pagination_type` and `pagination_config` from `source_configs`:
-   * **URL Parameter Pagination:** Iterates `?page=N` or `?paged=N` until zero new items or `max_pages_per_run` is reached.
-   * **Next Button Selector:** Crawl4AI follows `.pagination .next a[href]` until absent.
-   * **Varying Page Sizes:** Handles platforms with configurable page sizes (e.g. `?limit=50`).
-2. Discovered links are upserted into `raw_listings`:
+   * **URL Query Parameters (`page` & `limit`):** Iterates `?page=N`. Where supported, passes `&limit=50` (or `per_page=50`) to expand page size, reducing required network calls by **5x–10x**.
+   * **Path Parameters:** Formats URL via `/scholarships/page/{page}/`.
+   * **Next-Button DOM Selector:** Follows `.pagination a.next, a[rel="next"]`.
+   * **Safeguarded Stop Conditions:** Automatically halts when empty cards are detected consecutively, when pagination loops back to page 1, or when all cards on the page already exist in the database (incremental crawl cutoff).
+2. Discovered links and card thumbnails are upserted into `raw_listings`:
    ```sql
-   INSERT INTO raw_listings (operation_id, source_id, discovered_url, card_title_preview, listing_page_url, status)
+   INSERT INTO raw_listings (operation_id, source_id, discovered_url, card_title_preview, card_image_url, listing_page_url, status)
    VALUES (...)
    ON CONFLICT (source_id, discovered_url) DO NOTHING;
    ```
@@ -274,21 +276,29 @@ Triggered only when no existing template in the pool matches the current layout:
 
 ---
 
-### Stage 6: Detail Crawl, S3 Document Download & Anti-Fraud
+### Stage 6: Detail Crawl, Bilingual Acquisition & S3 Document Download
 For each newly discovered `raw_listing`:
 1. Navigates to the scholarship detail URL via Crawl4AI.
-2. Extracts comprehensive fields using the active/matched Level 2 template.
-3. **Application Link Verification (Anti-Fraud Gate):**
+2. If `source_configs.has_multi_tab_details == true`, executes pre-extraction JS unhiding all `.tab-pane` and `[role="tabpanel"]` elements.
+3. If `source_configs.has_multi_page_details == true`, traverses and concatenates sub-pages before parsing.
+4. Extracts comprehensive fields and `image_url` using the active/matched Level 2 template.
+5. **Bilingual Native Dual-Crawl:**
+   * If `source_configs.supported_languages` includes both `ar` and `en`:
+     * The crawler resolves the alternate language URL via `hreflang` tags, language toggle links in DOM, or URL rewrite rules.
+     * Crawls and extracts the second language using the template.
+     * Both the Arabic and English raw records are stored with the **same `opportunity_group_id: UUID`**.
+     * Completely eliminates downstream Translation API costs by using official native publisher content.
+6. **Application Link Verification (Anti-Fraud Gate):**
    * Performs an asynchronous `HEAD`/`GET` request following HTTP redirects.
    * Resolves the `final_application_url`.
-   * Flags suspicious patterns (ad-shorteners, spam redirects, unencrypted HTTP submission portals).
-4. **AWS S3 Document / PDF Stream Downloader:**
+   * Flags suspicious patterns (ad-shorteners, spam redirects, unencrypted HTTP submission portals). Supports `mailto:` and `tel:` alternative application channels.
+7. **AWS S3 Document / PDF Stream Downloader:**
    * If the target application link points to a file (`Content-Type: application/pdf`, `.docx`, etc.):
      1. Streams the file contents directly to AWS S3:
         `s3://{BUCKET_NAME}/attachments/{source_id}/{sha256_hash}.pdf`
      2. Sets `has_attachment = true`.
      3. Saves S3 key, file size, mime-type, and SHA256 checksum in `attachment_metadata`.
-5. **Language Determination:**
+8. **Language Determination:**
    * Evaluates text using Unicode character analysis:
      * Arabic range: `[\u0600-\u06FF]`.
      * If Arabic characters $> 30\%$, sets `detected_language = "ar"`; otherwise `"en"`.

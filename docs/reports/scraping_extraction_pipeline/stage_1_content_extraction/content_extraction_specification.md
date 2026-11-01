@@ -57,7 +57,85 @@ Stage 1 is the **Data Extraction, Pulling & Template Management** engine of the 
 
 ---
 
-## 3. The 3-Gate Deterministic Template-Matching Engine (Zero LLM Cost)
+## 3. Bilingual Platform Extraction Strategy (Native Dual-Crawl)
+
+When Stage 0 discovers that a platform natively supports both Arabic and English (`source_configs.supported_languages = ["ar", "en"]`), the extraction pipeline executes a **Native Dual-Crawl** rather than relying on artificial translation:
+
+### A. The Alternate Language Resolver
+When crawling a detail page (e.g. Arabic):
+1. **Priority 1 (`hreflang` Tag):** Reads `<link rel="alternate" hreflang="en" href="...">` from the `<head>` of the page.
+2. **Priority 2 (Language Toggle in DOM):** Extracts link from the header/footer toggle button (e.g., `a.lang-en[href]`).
+3. **Priority 3 (URL Rewrite Rule):** Applies the rule discovered in Stage 0 (e.g., swapping `/ar/` for `/en/` or appending `?lang=en`).
+
+### B. Template Reusability Across Languages
+* **Universal Structure:** Modern CMS engines (WordPress WPML/Polylang, Drupal, Next.js) share identical HTML/CSS selectors across language versions—only text content and text direction (`dir="rtl"` vs `dir="ltr"`) change. Selectors (`h1.entry-title`, `div.deadline`, `a.apply-button`) remain identical.
+* **Validation:** The engine tests the active template against the alternate language DOM. If it passes the 3-Gate Test, it extracts immediately. If the alternate language uses a distinct layout, a language-specific template (`language = "en"`) is pulled from `scraping_templates`.
+
+### C. Shared `opportunity_group_id` Linking
+* The crawler fetches and extracts the Arabic page $\rightarrow$ saves with `detected_language = "ar"`.
+* The crawler fetches and extracts the English page $\rightarrow$ saves with `detected_language = "en"`.
+* **Both raw records are linked with the exact same `opportunity_group_id: UUID`**.
+* **Zero Translation Cost Benefit:** When native Arabic and English versions are scraped directly from the publisher, the downstream Cleaning Module skips calling the Translation API entirely, achieving 100% native translation quality at zero extra cost.
+
+---
+
+## 4. Dynamic Pagination Engine (`page`, `limit`, `offset` & Stop Conditions)
+
+Level 1 catalog crawling traverses all available opportunity cards using the pagination rules in `source_configs.pagination_config`:
+
+### A. Supported Pagination Models:
+1. **Query Parameter Pagination (`page` & `limit`):**
+   * Pattern: `?page=N&limit=50` or `?paged=N`.
+   * **Page Size Expansion (`limit`):** If Stage 0 verified that the portal accepts `limit=50` or `per_page=50`, the crawler passes this parameter. This pulls 50 items per HTTP request instead of 10, reducing total network calls by **5x–10x**.
+2. **Path Parameter Pagination:**
+   * Pattern: `/scholarships/page/{page}/` (e.g., `/page/1/`, `/page/2/`).
+3. **Offset & Count Pagination:**
+   * Pattern: `?offset=N&count=50` (increments `offset += limit`).
+4. **Next-Button DOM Link:**
+   * Crawl4AI extracts the `href` attribute from `.pagination a.next, a[rel="next"]`.
+
+### B. Execution Loop & Safeguarded Stop Conditions:
+```python
+current_page = pagination_config.get("start_page", 1)
+max_pages = source_configs.max_pages_per_run or 10
+consecutive_empty_pages = 0
+first_page_card_urls = set()
+
+while current_page <= max_pages:
+    # 1. Construct paginated URL
+    url = build_paginated_url(catalog_url, current_page, pagination_config)
+    
+    # 2. Crawl & Extract Level 1 Cards via active template
+    cards = extract_level_1_listings(url, level_1_template)
+    card_urls = {c["discovered_url"] for c in cards}
+    
+    # 3. Stop Condition: End of Catalog (Empty Yield)
+    if len(cards) == 0:
+        consecutive_empty_pages += 1
+        if consecutive_empty_pages >= 2:
+            break
+            
+    # 4. Stop Condition: Redirect Loop / Circular Pagination
+    if current_page == 1:
+        first_page_card_urls = card_urls
+    elif card_urls == first_page_card_urls:
+        logger.info("Page %d redirected to page 1; terminating catalog crawl.", current_page)
+        break
+        
+    # 5. Stop Condition: Incremental Crawl Optimization
+    # If all cards on the page already exist in raw_listings, stop crawling older pages
+    if all_cards_already_in_db(card_urls, source_id):
+        logger.info("All cards on page %d are already in DB; stopping incremental crawl.", current_page)
+        break
+        
+    # 6. Save newly discovered cards and advance
+    save_raw_listings(cards)
+    current_page += pagination_config.get("step", 1)
+```
+
+---
+
+## 5. The 3-Gate Deterministic Template-Matching Engine (Zero LLM Cost)
 
 Before invoking the AI, the engine tests the fetched page against the source's stored template pool in `scraping_templates` ordered by `hit_count DESC`:
 
@@ -78,7 +156,7 @@ Before invoking the AI, the engine tests the fetched page against the source's s
 
 ---
 
-## 4. Sample-Anchored DOM Pruning (Token Minimization)
+## 6. Sample-Anchored DOM Pruning (Token Minimization)
 
 When template synthesis or repair is required, raw HTML (1MB–3MB) is pruned before being passed to the LLM.
 
@@ -96,7 +174,7 @@ When template synthesis or repair is required, raw HTML (1MB–3MB) is pruned be
 
 ---
 
-## 5. Soft-Drift Micro-Repair (`v1.0` $\rightarrow$ `v1.1`) vs. Hard Drift (`v2.0`)
+## 7. Soft-Drift Micro-Repair (`v1.0` $\rightarrow$ `v1.1`) vs. Hard Drift (`v2.0`)
 
 When a template fails on a detail page, the engine evaluates the degree of failure to prevent unnecessary template bloat and excessive token expenditure:
 
@@ -125,7 +203,7 @@ $$\text{Field Success Rate} = \frac{\text{Successfully Extracted Fields}}{\text{
 
 ---
 
-## 6. Scholarship Image Extraction (`image_url`)
+## 8. Scholarship Image Extraction (`image_url`)
 
 Images are required for displaying opportunity cards and detail banners on the Afaq portal:
 
@@ -142,7 +220,7 @@ Images are required for displaying opportunity cards and detail banners on the A
 
 ---
 
-## 7. Handling Advanced Platform Rendering Quirks
+## 9. Handling Advanced Platform Rendering Quirks
 
 Stage 1 leverages the structural flags discovered during Stage 0 (`source_configs`):
 
@@ -173,7 +251,7 @@ Stage 1 leverages the structural flags discovered during Stage 0 (`source_config
 
 ---
 
-## 8. Database Persistence & Telemetry
+## 10. Database Persistence & Telemetry
 
 ### Level 1 Insertion (`raw_listings`):
 ```sql
@@ -199,6 +277,7 @@ INSERT INTO raw_listings (
 ```sql
 INSERT INTO raw_grant_details (
     listing_id,
+    opportunity_group_id,
     operation_id,
     source_id,
     template_id,
@@ -212,9 +291,10 @@ INSERT INTO raw_grant_details (
     scraped_at,
     created_at
 ) VALUES (
-    :listing_id, :operation_id, :source_id, :template_id, :source_url,
-    :template_version, :raw_payload, :image_url, :detected_language,
-    'pending_verification', 'pending', NOW(), NOW()
+    :listing_id, :opportunity_group_id, :operation_id, :source_id,
+    :template_id, :source_url, :template_version, :raw_payload,
+    :image_url, :detected_language, 'pending_verification',
+    'pending', NOW(), NOW()
 );
 
 UPDATE raw_listings 
@@ -224,7 +304,7 @@ WHERE id = :listing_id;
 
 ---
 
-## 9. Module Structure in the Codebase
+## 11. Module Structure in the Codebase
 
 This stage is isolated in `src/modules/scraping/extraction/`:
 
