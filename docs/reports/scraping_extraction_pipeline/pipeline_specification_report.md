@@ -59,6 +59,8 @@ Populated and maintained autonomously by the engine:
 * `rate_limit_delay_sec: Float` — Default `1.0`. Inter-request delay (populated from `robots.txt` `Crawl-delay` if present).
 * `cool_down_until: DateTime?` — Timestamp populated when HTTP 429 (`Retry-After`) is received; skips crawling until expiration.
 * `robots_txt_sitemaps: String[]` — Discovered XML sitemap URLs extracted from `robots.txt` during Stage 0.
+* `ordering_strategy: String` — Catalog ordering detected in Stage 0: `chronological_descending`, `deadline_ascending`, `featured_sponsored_mixed`, `unknown` (default: `chronological_descending`).
+* `incremental_cutoff_enabled: Boolean` — Default `true`. Auto-disabled (`false`) when non-chronological or weighted ordering is detected.
 * `is_locked: Boolean` — Default `false`. Distributed lock preventing duplicate concurrent runs on the same source.
 * `locked_at: DateTime?` — Lock timestamp (auto-expires after 30 minutes to prevent deadlocks).
 * `has_multi_tab_details: Boolean` — Default `false`. Discovered in Stage 0 if detail pages use tabs.
@@ -137,7 +139,9 @@ Stores complete, uncleaned scholarship data and verification results:
 * `template_version: Int` — Version number of the template used for extraction (e.g. 1.0, 1.1).
 * `raw_payload: Json` — Structured raw extraction (title, university, funding, eligibility, deadline).
 * `image_url: String?` — Featured / hero scholarship image URL.
-* `detected_language: String` — `ar` or `en`.
+* `title_language: String` — ISO 639-1 code detected via statistical n-gram analysis (`ar`, `en`, `fr`, `de`, `es`, `tr`, etc., or `und`).
+* `body_language: String` — ISO 639-1 code detected on scholarship description.
+* `language_confidence: Float` — Statistical model classification confidence (0.0 to 1.0).
 * `link_verification_status: String` — `verified`, `suspicious`, `unreachable`, `s3_download`.
 * `final_application_url: String?` — Resolved destination URL after redirects.
 * `is_legitimate_domain: Boolean?`
@@ -291,45 +295,57 @@ When processing Level 1 (listing) or Level 2 (detail) HTML:
 
 ---
 
-### Stage 4: Autonomous AI Schema Synthesis & Content Gate
+### Stage 4: Autonomous AI Schema Synthesis & 4-Stage Validation Pipeline
 Triggered only when no existing template in the pool matches the current layout:
 1. **AI Content Re-Validation Gate:**
    * The synthesis prompt enforces a strict verification check:
      > *"Before generating extraction selectors, verify that this page contains scholarship/opportunity information. If the content represents an error page, expired listing, or unrelated text, return: `{'error': 'ERR_NOT_OPPORTUNITY_PORTAL'}`."*
    * If an error code is returned, synthesis aborts cleanly, and the incident is logged in `scrape_operations.error_summary`.
-2. **Schema Generation & Security Validation:**
+2. **Schema Generation via Gemini Flash:**
    * Executes `JsonCssExtractionStrategy.agenerate_schema` using Gemini Flash via `LLMConfig` on `<untrusted_web_content>`-shielded pruned DOM.
    * Targets canonical JSON contracts (Level 1: cards, pagination; Level 2: full scholarship attributes).
-   * **Template Security Verification:** Calls `ContentSanitizer.validate_template_schema()` to guarantee generated CSS/XPath selectors contain no JavaScript injection, malicious XPath evaluation functions, or syntax anomalies (`ERR_INVALID_TEMPLATE_SCHEMA`).
-3. **Dry-Run Validation Gate:**
-   * Runs the candidate schema against the retrieved HTML sample.
-   * Must pass the strict validation gate (valid container, non-empty title, valid action link).
+3. **The Strict 4-Stage Validation Pipeline:**
+   * **Stage A (JSON Syntax & Truncation Check):** Strips markdown fences; runs `json.loads()`. If truncated or broken, retries once with `response_mime_type="application/json"`. Repeated failure raises `ERR_LLM_OUTPUT_TRUNCATED`.
+   * **Stage B (Pydantic Structural Shape):** Validates schema against strict Pydantic model (`strict=True`, `extra="forbid"`). On mismatch (e.g. `fields` as dict), sends a targeted correction prompt feeding back the exact Pydantic error (`ERR_SCHEMA_SHAPE_INVALID`).
+   * **Stage C (CSS Selector Syntax & ReDoS Linting):** Compiles selectors with `soupsieve.compile()`; enforces max selector length $\le 300$, maximum `:has()` depth $= 1$, combinator cap $\le 5$, and bans unanchored universal selectors (`ERR_SELECTOR_SYNTAX_INVALID`). Employs Micro-Repair on individual failing selectors without re-generating the whole schema.
+   * **Stage D (Dry-Run Execution Gate with 200ms Timeout):** Executes candidate schema against the HTML sample with a hard **200ms timeout**. Verifies non-empty title and $\ge 1$ valid action link. ReDoS timeouts abort with `ERR_CSS_SELECTOR_REDOS_TIMEOUT`; zero-yield triggers alternative card sample re-synthesis.
 4. **Template Library Update:**
-   * Stores the validated schema as a new version in `scraping_templates`.
+   * Stores the thoroughly validated schema as a new version in `scraping_templates`.
    * Resets `source_configs.drift_detected = false`.
    * The new template is now part of the source's permanent layout pool.
 
 ---
 
 ### Stage 5: Dynamic Pagination & Full Catalog Traversal
-1. Reads `pagination_type` and `pagination_config` from `source_configs`:
+1. Reads `pagination_type`, `pagination_config`, and `ordering_strategy` from `source_configs`:
    * **URL Query Parameters (`page` & `limit`):** Iterates `?page=N`. Where supported, passes `&limit=50` (or `per_page=50`) to expand page size, reducing required network calls by **5x–10x**.
    * **Path Parameters:** Formats URL via `/scholarships/page/{page}/`.
    * **Next-Button DOM Selector:** Follows `.pagination a.next, a[rel="next"]`.
    * **Pre-Fetch Link Check:** Every paginated URL is pre-verified via `LinkValidator.validate_url()`.
 2. **The 5 Deterministic Catalog Termination & Cutoff Signals:**
-   * **DOM Next-Button Absence / Disabled:** The next-button link disappears or bears attributes like `disabled` or `.disabled`.
-   * **Zero-Yield State (Empty Catalog):** Container returns 0 cards (`len(cards) == 0`) with empty state indicators.
-   * **Circular Redirect & Duplicate Fingerprint (CMS Trap):** Detects silent WordPress loops where page $N$ redirects to or repeats page 1 cards.
-   * **HTTP 404 / 410 Response:** Server indicates page index out-of-bounds.
-   * **Incremental Database Cutoff (No NEW Content):** If 100% of the cards on Page $N$ already exist in `raw_listings`, halts traversal early (under 15 seconds for recurring crawls), skipping older historical pages.
+   * **Signal 1: DOM Next-Button Absence / Disabled:** The next-button link disappears or bears attributes like `disabled` or `.disabled`.
+   * **Signal 2: Zero-Yield State (Empty Catalog):** Container returns 0 cards (`len(cards) == 0`) with empty state indicators.
+   * **Signal 3: Semantic Content Fingerprinting (Loop & Stagnation Trap):**
+     * Strips ephemeral tracking query parameters (`utm_*`, `ref`, `redirect_from`, `session*`) via `LinkValidator.normalize_url`.
+     * Computes a SHA256 content fingerprint of sorted, normalized card titles on the page: `page_card_fingerprint`.
+     * **Circular Loop Trap:** If `page_card_fingerprint == first_page_fingerprint` (for $N > 1$), halts traversal cleanly.
+     * **Stagnant Loop Trap:** If `page_card_fingerprint == previous_page_fingerprint`, halts immediately.
+   * **Signal 4: HTTP 404 / 410 Response:** Server indicates page index out-of-bounds.
+   * **Signal 5: Incremental Lookahead Cutoff:**
+     * Active only when `source_configs.incremental_cutoff_enabled == true` (`ordering_strategy == "chronological_descending"`).
+     * Employs a **Lookahead Window of 2 consecutive pages**:
+       * If Page $N$ has 100% existing cards, checks Page $N+1$.
+       * If Page $N+1$ *also* has 100% existing cards (`consecutive_existing_pages >= 2`), halts traversal early (saving 95% crawl time on recurring runs while protecting against pinned sponsored posts on Page 1).
+       * If ordering is non-chronological (`deadline_ascending`, `random`), cutoff is disabled and crawler scans up to `max_pages_per_run` with idempotent deduplication.
 3. **Content Sanitization & Database Ingestion:**
    * Discovered card titles and preview snippets are processed through `ContentSanitizer.to_clean_text()` to strip all markup and normalize Unicode.
    * Card thumbnail image URLs are verified through `FileValidator.validate_image_url()` (rejects raw SVGs and data URIs).
    * Upserted into `raw_listings`:
    ```sql
-   INSERT INTO raw_listings (operation_id, source_id, discovered_url, card_title_preview, card_image_url, listing_page_url, status)
-   VALUES (...)
+   INSERT INTO raw_listings (
+       operation_id, source_id, parent_id, root_listing_id, page_number, tree_depth,
+       discovered_url, card_title_preview, card_image_url, listing_page_url, status, retry_count, max_retries
+   ) VALUES (...)
    ON CONFLICT (source_id, discovered_url) DO NOTHING;
    ```
 4. Guarantees idempotency—existing scholarships are not re-queued unnecessarily.
@@ -350,16 +366,18 @@ For each newly discovered `raw_listing`:
    * **Structured Fields Sanitization:** All single-value attributes (title, provider, stipend, country, degree levels, deadlines) are processed through `ContentSanitizer.to_clean_text()`, enforcing 100% plain text.
    * **Rich Description Sanitization:** Detailed description bodies are sanitized via `ContentSanitizer.sanitize_html()` (powered by Rust `nh3`), purging all scripts, iframes, inline event handlers, and data URIs.
    * **Image URL Verification:** Featured/hero image validated via `FileValidator.validate_image_url()`.
-5. **Bilingual Native Dual-Crawl:**
-   * If `source_configs.supported_languages` includes both `ar` and `en`:
-     * The crawler resolves the alternate language URL via `hreflang` tags, language toggle links in DOM, or URL rewrite rules.
-     * Crawls and extracts the second language using the template.
-     * Both the Arabic and English raw records are stored with the **same `opportunity_group_id: UUID`**.
-     * Completely eliminates downstream Translation API costs by using official native publisher content.
-6. **Application Link Verification (Anti-Fraud & Anti-SSRF Gate):**
+5. **Statistical Language Classification (`py3langid`):**
+   * Evaluates text using statistical n-gram analysis:
+     * Deduces `title_language` (ISO 639-1) and `body_language`.
+     * Records `language_confidence` (0.0 to 1.0). If confidence $< 0.75$, tags as `"und"` (undetermined / mixed).
+6. **Multilingual Storage & Native Dual-Crawl Pairing:**
+   * **Unified Raw Storage:** Both Arabic and English (and any third-language) versions are stored in `raw_grant_details` in their native original text without mutation.
+   * **Pairing via `opportunity_group_id`:** When a portal publishes both languages natively (e.g. `/ar/grant-1` and `/en/grant-1`), both rows share the **exact same `opportunity_group_id: UUID`**.
+   * **Downstream Cleaning Handoff:** The Cleaning Engine groups by `opportunity_group_id`, unifying the native Arabic and native English rows into a single canonical `Opportunity` record with zero translation API cost. Third-language grants (e.g. French, German) are translated to Arabic/English strictly during the cleaning phase.
+7. **Application Link Verification (Anti-Fraud & Anti-SSRF Gate):**
    * Inspects external application links via `LinkValidator.validate_url()`: verifies public IP resolution (blocks SSRF to internal networks or AWS IMDS), follows redirects up to 5 hops, and halts circular loops.
    * Flags suspicious patterns (ad-shorteners, spam redirects, unencrypted HTTP submission portals). Supports `mailto:` and `tel:` alternative application channels.
-7. **AWS S3 Document / PDF Stream Downloader & Magic-Byte Gate:**
+8. **AWS S3 Document / PDF Stream Downloader & Magic-Byte Gate:**
    * If the target application link points to a file (`Content-Type: application/pdf`, `.docx`, etc.):
      1. Streams download via `FileValidator.download_and_validate_stream()` with a strict 25 MB cutoff.
      2. Verifies file signature magic bytes (`%PDF-`, `PK\x03\x04`), blocking disguised executables or scripts (`ERR_MALICIOUS_FILE_TYPE`).
@@ -367,10 +385,6 @@ For each newly discovered `raw_listing`:
         `s3://{BUCKET_NAME}/attachments/{source_id}/{sha256_hash}.pdf`
      4. Sets `has_attachment = true`.
      5. Saves S3 key, file size, mime-type, and SHA256 checksum in `attachment_metadata`.
-8. **Language Determination:**
-   * Evaluates text using Unicode character analysis:
-     * Arabic range: `[\u0600-\u06FF]`.
-     * If Arabic characters $> 30\%$, sets `detected_language = "ar"`; otherwise `"en"`.
 
 ---
 
@@ -417,6 +431,10 @@ To prevent LLM billing waste on invalid content, the AI prompts enforce the foll
 | `ERR_ACCESS_CHALLENGE_BLOCKED` | Cloudflare / CAPTCHA challenge captured in DOM | Flags proxy/stealth failure; triggers cool-down |
 | `ERR_PARKING_OR_EXPIRED_DOMAIN` | Domain expired, domain-for-sale, or registrar splash | Deactivates source permanently |
 | `ERR_SCHEMA_VALIDATION_FAILED` | Generated selectors failed dry-run against HTML sample | Retries generation once with negative feedback |
+| `ERR_LLM_OUTPUT_TRUNCATED` | LLM response hit token boundary or returned broken JSON | Triggers compact JSON-mode retry |
+| `ERR_SCHEMA_SHAPE_INVALID` | LLM JSON returned invalid schema structure (Pydantic failure)| Sends targeted correction prompt with exact validation error |
+| `ERR_SELECTOR_SYNTAX_INVALID` | Generated CSS selector fails compilation in soupsieve | Triggers single-selector micro-repair |
+| `ERR_CSS_SELECTOR_REDOS_TIMEOUT`| CSS selector exceeded 200ms dry-run timeout (combinator bomb)| Rejects selector, prompts LLM for simple non-backtracking class names |
 
 ---
 

@@ -132,6 +132,11 @@ Before transmitting the pruned structural skeleton to Gemini Flash, it is proces
 7. **Multi-Page Detail Article Detection:**
    * Checks if single scholarship articles are paginated across sub-pages (e.g., WordPress `<!--nextpage-->`, `.page-links a`, or `.post-pagination`).
    * If detected, flags `has_multi_page_details: true` and identifies `subpage_pagination_selector: String?`.
+8. **Catalog Ordering Strategy & Cutoff Detection:**
+   * Analyzes sort order indicators, header labels, and date snippets across discovered cards.
+   * Classifies `ordering_strategy`:
+     * `chronological_descending` (default newest-first) $\rightarrow$ sets `incremental_cutoff_enabled = true`.
+     * `deadline_ascending` (closing soon), `featured_sponsored_mixed`, or `random` $\rightarrow$ sets `incremental_cutoff_enabled = false` (or lookahead mode).
 
 ### Step 5: Conditional 2nd-Hop Crawl (Catalog Verification)
 * **Condition Check:**
@@ -163,6 +168,8 @@ INSERT INTO source_configs (
     max_concurrent_crawls,
     rate_limit_delay_sec,
     robots_txt_sitemaps,
+    ordering_strategy,
+    incremental_cutoff_enabled,
     is_locked,
     has_multi_tab_details,
     tab_container_selector,
@@ -188,6 +195,8 @@ INSERT INTO source_configs (
     1,
     :rate_limit_delay_sec,
     :robots_txt_sitemaps,
+    :ordering_strategy,
+    :incremental_cutoff_enabled,
     false,
     :has_multi_tab_details,
     :tab_container_selector,

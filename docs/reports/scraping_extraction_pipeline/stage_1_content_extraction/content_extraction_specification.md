@@ -73,10 +73,17 @@ When crawling a detail page (e.g. Arabic):
 * **Validation:** The engine tests the active template against the alternate language DOM. If it passes the 3-Gate Test, it extracts immediately. If the alternate language uses a distinct layout, a language-specific template (`language = "en"`) is pulled from `scraping_templates`.
 
 ### C. Shared `opportunity_group_id` Linking
-* The crawler fetches and extracts the Arabic page $\rightarrow$ saves with `detected_language = "ar"`.
-* The crawler fetches and extracts the English page $\rightarrow$ saves with `detected_language = "en"`.
-* **Both raw records are linked with the exact same `opportunity_group_id: UUID`**.
-* **Zero Translation Cost Benefit:** When native Arabic and English versions are scraped directly from the publisher, the downstream Cleaning Module skips calling the Translation API entirely, achieving 100% native translation quality at zero extra cost.
+* The crawler evaluates text via statistical n-gram analysis (`py3langid`), assigning ISO 639-1 language codes:
+  * The crawler fetches and extracts the Arabic page $\rightarrow$ saves with `title_language = "ar"`, `body_language = "ar"`.
+  * The crawler fetches and extracts the English page $\rightarrow$ saves with `title_language = "en"`, `body_language = "en"`.
+* **Both raw records are linked in `raw_grant_details` with the exact same `opportunity_group_id: UUID`**.
+* **Zero Translation Cost Benefit:** When native Arabic and English versions are scraped directly from the publisher, the downstream Cleaning Module unifies both records under a single canonical `Opportunity` record with zero Translation API expense.
+
+### D. Foreign & Third-Language Portals (French, German, Turkish, Spanish)
+When a platform publishes exclusively in a third language (e.g. Campus France in French, DAAD in German):
+* The extractor stores the scholarship in `raw_grant_details` in its **pure, unmutated native language** (`title_language = "fr"`, `body_language = "fr"`).
+* The Scraping Engine **never translates** third-party content during raw extraction, preserving raw truth and avoiding extraction latency.
+* **Cleaning Module Handoff:** The downstream Data Cleaning & Normalization Engine detects the foreign language code and invokes Gemini translation/taxonomy mapping to produce canonical Arabic and English records for the user portal.
 
 ---
 
@@ -104,25 +111,31 @@ The engine identifies that it has reached the end of the catalog and that no fur
 2. **Zero-Yield State (Empty Catalog Container):**
    * For URL parameter pagination (`?page=15` when only 14 pages exist), the server returns HTTP 200, but the list container yields zero opportunity cards (`len(soup.select(base_selector)) == 0`).
    * The DOM often displays empty-state markers (e.g., *"No opportunities found"*, *"لا توجد نتائج"*). Traversal halts after this confirmation.
-3. **Circular Redirect & Duplicate Page Fingerprinting (The CMS Loop Trap):**
-   * Many platforms (particularly WordPress) do not return an error when you exceed the last page; instead, they silently redirect back to **Page 1** or repeat the contents of the last valid page.
-   * **Detection:** The engine tracks an in-memory set of the URLs extracted on Page 1 (`first_page_card_urls`).
-   * If Page $N$ returns cards whose URLs are **100% identical** to Page 1 or identical to Page $N-1$, the engine flags a circular loop trap and terminates catalog crawling.
+3. **Semantic Content Fingerprinting & Stagnant Loop Trap:**
+   * Many platforms (particularly WordPress) do not return an error when you exceed the last page; instead, they silently redirect back to **Page 1** with ephemeral query parameters (`?ref=page2`, `?utm_source=loop`) or repeat the last page indefinitely.
+   * **Strict URL Normalization:** `LinkValidator.normalize_url()` strips tracking/ephemeral query parameters (`utm_*`, `ref`, `redirect_from`, `session*`, fragments, trailing slashes).
+   * **Title Set Hash:** Computes a SHA256 fingerprint from the sorted normalized titles of cards on the page:
+     $$\text{page\_card\_fingerprint} = \text{hash}\Big(\text{"|".join}\big(\text{sorted}(c\text{['normalized\_title']})\big)\Big)$$
+   * **Circular Loop:** If `page_card_fingerprint == first_page_fingerprint` for $N > 1$, halts traversal immediately.
+   * **Stagnant Loop:** If `page_card_fingerprint == previous_page_fingerprint`, halts traversal immediately.
 4. **HTTP 404 / 410 Response Codes:**
    * Platforms using path pagination (`/scholarships/page/15/`) often return `HTTP 404 Not Found` or `410 Gone` when the page index is exceeded.
    * The crawler treats 404 on page $N > 1$ as a normal catalog termination signal, closing the loop cleanly.
-5. **Incremental Database Cutoff (Detecting No "NEW" Content):**
-   * Scholarship listings are almost universally ordered chronologically (`newest first`).
-   * During recurring scheduled runs, the engine checks whether all opportunity links discovered on Page $N$ already exist in `raw_listings`.
-   * If **100% of the cards on Page $N$ are already in the database**, all subsequent pages ($N+1$, $N+2$) contain even older historical records that were already ingested in past runs.
-   * Traversal halts early, typically completing a recurring crawl in under 15 seconds.
+5. **Incremental Lookahead Cutoff (Handling Sponsored & Non-Chronological Feeds):**
+   * **Conditional Execution:** Active only when `source_configs.incremental_cutoff_enabled == true` (`ordering_strategy == "chronological_descending"`). If ordering is `deadline_ascending`, `featured_sponsored_mixed`, or `random`, cutoff is disabled, scanning up to `max_pages_per_run` with database idempotency (`ON CONFLICT DO NOTHING`).
+   * **The Lookahead Window:** Instead of stopping on a single page with 100% existing cards (which could be caused by pinned sponsored posts), the crawler requires **2 consecutive pages of 100% existing cards**:
+     * If Page $N$ has 100% existing cards, checks Page $N+1$.
+     * If Page $N+1$ *also* contains 100% existing cards (`consecutive_existing_pages >= 2`), halts traversal with high confidence.
+     * If Page $N+1$ contains even 1 new card, resets the consecutive counter to 0 and continues.
 
 ### C. Execution Loop Code Implementation:
 ```python
 current_page = pagination_config.get("start_page", 1)
 max_pages = source_configs.max_pages_per_run or 10
 consecutive_empty_pages = 0
-first_page_card_urls = set()
+consecutive_existing_pages = 0
+first_page_fingerprint = None
+previous_page_fingerprint = None
 
 while current_page <= max_pages:
     # 1. Construct & Security-Validate paginated URL
@@ -131,26 +144,39 @@ while current_page <= max_pages:
     
     # 2. Crawl & Extract Level 1 Cards via active template
     cards = extract_level_1_listings(validated_url.canonical_url, level_1_template)
-    card_urls = {c["discovered_url"] for c in cards}
     
-    # 3. Stop Signal: Zero-Yield (Empty Catalog)
+    # 3. Stop Signal 2: Zero-Yield (Empty Catalog)
     if len(cards) == 0:
         consecutive_empty_pages += 1
         if consecutive_empty_pages >= 2:
             logger.info("Catalog container empty on page %d; reached catalog end.", current_page)
             break
             
-    # 4. Stop Signal: Circular Redirect / Duplicate Fingerprint
+    # 4. Stop Signal 3: Semantic Content Fingerprinting (Loop & Stagnation Trap)
+    card_titles = sorted([ContentSanitizer.to_clean_text(c["title"]) for c in cards])
+    current_fingerprint = hashlib.sha256("|".join(card_titles).encode()).hexdigest()
+    
     if current_page == 1:
-        first_page_card_urls = card_urls
-    elif card_urls == first_page_card_urls:
-        logger.info("Page %d redirected to page 1; terminating catalog crawl.", current_page)
+        first_page_fingerprint = current_fingerprint
+    elif current_fingerprint == first_page_fingerprint:
+        logger.info("Page %d redirected to Page 1 (Title Fingerprint Match); terminating loop.", current_page)
+        break
+    elif current_fingerprint == previous_page_fingerprint:
+        logger.info("Page %d stagnant (identical to Page %d); terminating loop.", current_page, current_page - 1)
         break
         
-    # 5. Stop Signal: Incremental Crawl Cutoff (No NEW Content)
-    if all_cards_already_in_db(card_urls, source_id):
-        logger.info("All cards on page %d are already in DB; stopping incremental crawl.", current_page)
-        break
+    previous_page_fingerprint = current_fingerprint
+    card_urls = {LinkValidator.normalize_url(c["discovered_url"]) for c in cards}
+        
+    # 5. Stop Signal 5: Incremental Lookahead Cutoff
+    if source_configs.incremental_cutoff_enabled:
+        if all_cards_already_in_db(card_urls, source_id):
+            consecutive_existing_pages += 1
+            if consecutive_existing_pages >= 2:
+                logger.info("2 consecutive pages contain 100%% existing cards; stopping incremental crawl.", current_page)
+                break
+        else:
+            consecutive_existing_pages = 0
         
     # 6. Save newly discovered cards and advance
     save_raw_listings(cards)
@@ -196,9 +222,19 @@ When template synthesis or repair is required, raw HTML (1MB–3MB) is pruned be
 
 *Token Reduction:* Compresses 1.5MB pages down to **8KB–18KB (~2,000–3,500 tokens)**, retaining 100% of the semantic anchors the LLM needs to deduce exact selectors.
 
-### Security Wrapping & Template Validation:
+### Security Wrapping & 4-Stage Template Validation Pipeline:
 * **Prompt Shielding:** All pruned DOM payloads sent to Gemini Flash are wrapped inside `<untrusted_web_content>` isolation boundaries via `ContentSanitizer.wrap_untrusted_prompt()`, preventing prompt injection from third-party HTML.
-* **Schema Verification:** Any newly synthesized or repaired template schema must pass `ContentSanitizer.validate_template_schema()` before persisting into `scraping_templates`, verifying CSS selectors and disallowing malicious XPath constructs (`ERR_INVALID_TEMPLATE_SCHEMA`).
+* **The Strict 4-Stage Validation Pipeline:** Before any AI-generated or repaired template is saved into `scraping_templates`, it must traverse four strict sequential gates:
+  1. **Stage A (JSON Syntax & Truncation):** Strips markdown fences, parses with `json.loads()`. If truncated due to output token boundaries, retries once with `response_mime_type="application/json"` and minimal prompt formatting (`ERR_LLM_OUTPUT_TRUNCATED`).
+  2. **Stage B (Pydantic Structural Shape):** Enforces strict Pydantic model (`strict=True`, `extra="forbid"`). On structure errors (e.g., `fields` as dict), sends targeted feedback with the exact Pydantic error message (`ERR_SCHEMA_SHAPE_INVALID`).
+  3. **Stage C (CSS Selector Syntax & ReDoS Linting):**
+     * Pre-compiles all selectors via `soupsieve.compile()`.
+     * Enforces strict ReDoS bounds: `max_selector_length = 300`, max `:has()` depth $= 1$ (no nested `:has()`), max combinators (`>`, `+`, `~`, `:has`, `:not`) $\le 5$, bans universal root `*`, and limits comma branches $\le 3$.
+     * On syntax or complexity failure, triggers single-selector Micro-Repair rather than regenerating the full schema (`ERR_SELECTOR_SYNTAX_INVALID`).
+  4. **Stage D (Dry-Run Execution Gate with 200ms Timeout):**
+     * Executes the candidate template against the sample HTML with a strict **200ms execution timeout**.
+     * ReDoS timeouts abort with `ERR_CSS_SELECTOR_REDOS_TIMEOUT` (re-prompting AI for simple, non-backtracking class selectors).
+     * Zero-yield triggers alternative card sample re-synthesis.
 
 ---
 
@@ -345,7 +381,9 @@ INSERT INTO raw_grant_details (
     template_version,
     raw_payload,
     image_url,
-    detected_language,
+    title_language,
+    body_language,
+    language_confidence,
     link_verification_status,
     status,
     retry_count,
@@ -355,8 +393,8 @@ INSERT INTO raw_grant_details (
 ) VALUES (
     :listing_id, :opportunity_group_id, :operation_id, :source_id,
     :template_id, :source_url, :template_version, :raw_payload,
-    :image_url, :detected_language, 'pending_verification',
-    'pending', 0, 3, NOW(), NOW()
+    :image_url, :title_language, :body_language, :language_confidence,
+    'pending_verification', 'pending', 0, 3, NOW(), NOW()
 );
 
 UPDATE raw_listings 
