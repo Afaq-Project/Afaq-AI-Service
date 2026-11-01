@@ -1,18 +1,12 @@
 <!--
 Sync Impact Report:
-- Version change: v1.0.0 -> v2.0.0
-- Bump Rationale: Major governance overhaul aligning the Constitution specifically with SpecKit requirements engineering, feature planning artifacts, task decomposition, and human review prioritization, while eliminating redundancies with AGENT.md.
-- Modified Principles:
-  - Focused Core Domain Invariants on public data integrity, low-memory bounds, and ingestion isolation.
+- Version change: v2.0.0 -> v2.1.0
+- Bump Rationale: Minor governance addition establishing a mandatory precautionary rule requiring the AI agent to actively read AGENT.md when executing any SpecKit workflow.
+- Modified Principles: None
 - Added Sections:
-  - Mandatory 8-Artifact Feature Lifecycle (spec.md, endpoints.md, use_cases.md, plan.md, test_plan.md, security.md, tasks.md, review_priorities.md).
-  - Requirements & User Story Standards.
-  - Test-Driven Development (TDD) Drift Prevention Mandate.
-  - Human Review Priority Framework (Tier 1 Critical to Tier 4 Low).
-  - Pre-Implementation Specification Approval Gate.
-- Removed Sections:
-  - Removed duplicate "Technology Stack & Architectural Constraints" (delegated to AGENT.md).
-  - Removed duplicate "Testing Philosophy & Quality Standards" (delegated to AGENT.md).
+  - Mandatory Precautionary Reading of AGENT.md (Section 1).
+  - Principle V: Precautionary Operational Context Ingestion (AGENT.md Mandate) (Section 3).
+- Removed Sections: None
 - Follow-up TODOs: None
 -->
 
@@ -25,6 +19,11 @@ This Constitution serves as the authoritative governance document for **requirem
 * **Separation of Concerns:**
   * General development workflows, static analysis tooling commands, binary locations, and pre-commit security pipelines are governed exclusively by [`AGENT.md`](file:///home/abood/Project/Afaq/Afaq-AI-Service/AGENT.md).
   * Feature planning, requirement specifications, test-driven designs, task structures, and human review governance are governed exclusively by this **Constitution**.
+
+* **Mandatory Precautionary Reading of AGENT.md:**
+  * Whenever the AI agent initiates or executes any SpecKit command or feature planning workflow (including `/speckit-specify`, `/speckit-plan`, `/speckit-tasks`, `/speckit-implement`, etc.), the agent **MUST** actively read [`AGENT.md`](file:///home/abood/Project/Afaq/Afaq-AI-Service/AGENT.md).
+  * Although the environment or prompt may automatically load `AGENT.md`, this explicit reading rule serves as a mandatory precautionary guardrail.
+  * **Rationale:** Actively ingesting `AGENT.md` ensures that the agent remains continuously aligned with current architectural rules, boundary definitions, pre-commit quality gates, and git branching policies across all stages of feature specification and task execution.
 
 ---
 
@@ -129,6 +128,10 @@ specs/<feature-name>/
 * **Rule:** Once the 8 planning artifacts are approved, the agent cannot alter feature scope or silently rewrite specifications during execution.
 * **Amendment Protocol:** If technical blockers or edge cases discovered during implementation require altering the specification, the agent must pause, document the required amendment, and obtain explicit user consent before proceeding.
 
+### Principle V: Precautionary Operational Context Ingestion (AGENT.md Mandate)
+* **Rule:** Before authoring, modifying, or decomposing any feature artifacts through SpecKit, the agent **MUST** actively read [`AGENT.md`](file:///home/abood/Project/Afaq/Afaq-AI-Service/AGENT.md) to cross-reference technical constraints, verification commands, and operational boundaries.
+* **Precautionary Rationale:** While tooling or environment configurations may inject `AGENT.md` into context automatically, this active read requirement prevents subtle context gaps, stale assumptions, and misalignment with current pre-commit verification pipelines or architectural constraints.
+
 ---
 
 ## 4. Non-Negotiable Core Domain Invariants
@@ -151,4 +154,4 @@ Regardless of feature scope, all feature specifications and plans MUST uphold th
   * **PATCH (1.0.X):** Wording clarifications, template formatting, and non-semantic corrections.
 * **Review Cycle:** The constitution must be verified against delivered features at the completion of each major track.
 
-**Version**: 2.0.0 | **Ratified**: 2026-11-01 | **Last Amended**: 2026-11-01
+**Version**: 2.1.0 | **Ratified**: 2026-11-01 | **Last Amended**: 2026-11-01
