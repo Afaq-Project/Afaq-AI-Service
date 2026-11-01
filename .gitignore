@@ -64,5 +64,13 @@ htmlcov/
 *.sqlite
 *.sqlite3
 
+# --------------------------------------------
+# Architecture analysis & caching tools
+# --------------------------------------------
+.codeatlas/
+.enola/
+.archmap/
+**/.archmap/
+
 .agent/
 scripts/scratch/test_scraper.py

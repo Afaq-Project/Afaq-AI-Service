@@ -4,9 +4,6 @@ from src.modules.core.auth.api_key_auth import ApiKeyService
 from src.modules.core.auth.models import ApiKeyInfo
 from src.modules.core.config.settings import get_settings
 from src.modules.core.database.prisma_client import get_client
-from src.modules.core.database.repositories.opportunity_repository import (
-    OpportunityRepository,
-)
 from src.modules.infrastructure.webhook.webhook_client import WebhookClient
 
 
@@ -18,7 +15,7 @@ async def require_api_key(
     x_api_key: str = Header(default="", alias="X-API-Key"),
     service: ApiKeyService = Depends(get_api_key_service),
 ) -> ApiKeyInfo:
-    """تبعية تحمي نقاط النهاية: ترفض الطلب إذا كان المفتاح غير صالح."""
+    """Dependency protecting endpoints: rejects request if API key is invalid."""
     key_info = await service.validate(x_api_key)
 
     if key_info is None:
@@ -29,10 +26,6 @@ async def require_api_key(
         )
 
     return key_info
-
-
-def get_opportunity_repository() -> OpportunityRepository:
-    return OpportunityRepository(get_client())
 
 
 def get_webhook_client() -> WebhookClient:

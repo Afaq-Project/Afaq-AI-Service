@@ -19,8 +19,8 @@ This document establishes the architectural principles, coding conventions, test
   * Commits must be atomic, well-described, and follow Conventional Commits (`feat:`, `fix:`, `chore:`, `refactor:`, `test:`, `docs:`).
 
 * **Pre-Installed Tools & Zero Re-Download Rule:**
-  * All quality, security, contract, and performance tools (SonarScanner, Sonar CLI, Trivy, Gitleaks, Pact Broker CLI, k6) are **already installed globally on the system**.
-  * **DO NOT** attempt to re-install, re-download, or run package managers to fetch these tools. Use the existing binaries as documented in Section 5.
+  * All quality, security, contract, architectural, and performance tools (**SonarScanner**, **Sonar CLI**, **Trivy**, **Gitleaks**, **Pact Broker CLI**, **k6**, **KG-ARCHMAP**, **Enola**, and **ArchUnitPython**) are **already installed** on the system or environment.
+  * **DO NOT** attempt to re-install, re-download, or run package managers to fetch these tools. Use the existing binaries and environment dependencies as documented in Section 5.
 
 * **Zero Local Container Builds:**
   * **Never run `docker build` locally.** Container builds are handled exclusively by CI/CD pipelines.
@@ -213,7 +213,44 @@ Pact is used to prevent breaking contract changes between `afaq-ai-service` and 
   ```
   This script executes `pytest tests/contracts/`, publishes verification results to the local broker, and runs `can-i-merge` and `can-i-deploy` validation checks.
 
-### 5.7 Performance & Load Testing (k6)
+### 5.7 Architectural Fitness Testing (ArchUnitPython)
+* **Package & Installation:** `archunitpython` v1.8.1 installed as a development dependency via `uv` in `pyproject.toml`.
+* **Test Suite Location:** `tests/architecture/`
+* **Execution Command:**
+  ```bash
+  uv run pytest tests/architecture/ -v
+  ```
+* **Architectural Invariants Enforced:**
+  * **Zero Circular Dependencies:** `files("src").should().have_no_cycles()`
+  * **Strict Layer Separation:** The `api` layer must never directly depend on `repositories` (`where_layer("api").may_not_depend_on_layers("repositories")`).
+  * Domain services and protocols remain decoupled from external infrastructure implementations.
+* **Acceptance Criteria:** 100% of architectural unit tests must pass.
+
+### 5.8 Architectural Graph & Dependency Health (KG-ARCHMAP)
+* **Binary Location:** Installed globally via `uv` tool at `/home/abood/.local/bin/archmap` and `/home/abood/.local/bin/archmap-check` (in `PATH`).
+* **Execution Command:**
+  ```bash
+  archmap analyze src --fail-on-cycles --fail-on-layer-violations
+  ```
+* **Acceptance Criteria:**
+  * **0 circular dependencies**.
+  * **0 layer violations**.
+  * **Health score $\ge 90/100$ (Grade A)** and 100% import resolution rate.
+
+### 5.9 Architectural Baseline & Drift Prevention (Enola)
+* **Binary Location:** Installed globally via official installer at `/home/abood/.local/bin/enola` (version `0.4.38`, in `PATH`).
+* **Workflow:**
+  1. **Before starting modifications**, pin the architectural baseline if needed:
+     ```bash
+     enola baseline pin .
+     ```
+  2. **Before committing**, grade architectural changes against the baseline:
+     ```bash
+     enola check . --fail-on=layers,cycles
+     ```
+* **Acceptance Criteria:** Exit code `0` (`PASS — no architectural change` or non-regressive structural delta).
+
+### 5.10 Performance & Load Testing (k6)
 * **Binary Location:** Installed globally via `snap` at `/snap/bin/k6` (in `PATH`).
 * **Configuration & Workflow:**
   * Expected performance metrics (RPS, latency p95/p99, error rate thresholds) and concurrent virtual user (VU) load profiles will be provided in a designated **Markdown specification file**.
@@ -234,7 +271,10 @@ Every functional commit must satisfy the following checklist:
 | **Linting** | `uv run ruff check .` | 0 errors |
 | **Formatting** | `uv run black --check .` | 0 files to reformat |
 | **Unit & Contract Tests** | `uv run pytest --cov=src --cov-report=xml` | All tests pass, coverage XML generated |
-| **Contract Gates** | `./scripts/pact_check.sh` | Contracts verified, `can-i-deploy` ok |
+| **Architectural Rules (ArchUnit)** | `uv run pytest tests/architecture/ -v` | All architectural invariant rules pass |
+| **Architectural Health (KG-ARCHMAP)** | `archmap analyze src --fail-on-cycles --fail-on-layer-violations` | 0 cycles, 0 layer violations, Score $\ge 90$ |
+| **Architecture Drift Gate (Enola)** | `enola check . --fail-on=layers,cycles` | Exit code 0 (Clean / No regression) |
+| **Contract Gates (Pact)** | `./scripts/pact_check.sh` | Contracts verified, `can-i-deploy` ok |
 | **Secrets Audit** | `gitleaks detect --source . -v` | 0 leaks found |
 | **Dependency Security** | `trivy fs . --scanners vuln --pkg-types library --severity HIGH,CRITICAL --skip-db-update` | 0 CRITICAL vulnerabilities |
 | **Quality & Vulnerabilities** | `sonar-scanner ...` & `sonar list issues ...` | 0 BLOCKER, 0 HIGH, 0 MEDIUM |

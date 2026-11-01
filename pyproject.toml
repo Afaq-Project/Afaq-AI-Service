@@ -34,6 +34,7 @@ dev = [
     "black>=24.0.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
+    "archunitpython>=1.8.1",
 ]
 
 [tool.pytest.ini_options]
@@ -47,6 +48,9 @@ exclude = [
     "backups",
     ".venv",
     ".scannerwork",
+    ".enola",
+    ".codeatlas",
+    ".archmap",
 ]
 
 [tool.ruff.lint]
@@ -59,7 +63,7 @@ ignore = ["E501"]
 [tool.black]
 target-version = ["py312"]
 line-length = 88
-extend-exclude = "^/(scripts/scratch|backups|\\.scannerwork)/"
+extend-exclude = "^/(scripts/scratch|backups|\\.scannerwork|\\.enola|\\.codeatlas|\\.archmap)/"
 
 [[tool.mypy.overrides]]
 module = ["dateparser", "bs4", "asyncpg"]
