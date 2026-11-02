@@ -1,4 +1,4 @@
-# Specification Quality Checklist: Security, Link Validation & Content Sanitization Module
+# Specification Quality Checklist: Security & Validation Gatekeeper Module
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning  
 **Created**: 2026-11-01  
@@ -19,7 +19,7 @@
 - [x] Success criteria are technology-agnostic (no implementation details)
 - [x] All acceptance scenarios are defined
 - [x] Edge cases are identified
-- [x] Scope is clearly bounded
+- [x] Scope is clearly bounded (pure non-mutating gatekeeper; zero data cleaning; prompt engineering deferred to scraping)
 - [x] Dependencies and assumptions identified
 
 ## Feature Readiness
@@ -31,6 +31,6 @@
 
 ## Notes
 
-- Specification validated against `docs/reports/security_and_validation_module/security_and_validation_specification.md`.
-- All requirements adhere to the 8-artifact feature lifecycle mandated by Constitution v2.1.0.
+- Specification validated against `docs/reports/security_and_validation_module/security_and_validation_specification.md` and `ARCHITECTURAL_RULES_AND_BOUNDARIES.md`.
+- All requirements adhere to the 8-artifact feature lifecycle mandated by Constitution v2.2.0.
 - Ready to proceed to planning and endpoint/scenario generation.
