@@ -42,6 +42,42 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = ""
     aws_s3_endpoint_url: str = ""
 
+    # Filebase S3 configuration
+    filebase_endpoint: str = "https://s3.filebase.com"
+    filebase_region: str = "us-east-1"
+    filebase_bucket: str = ""
+    filebase_access_key: str = ""
+    filebase_secret_key: str = ""
+
+    @property
+    def s3_endpoint(self) -> str:
+        """Returns the configured S3 endpoint URL (Filebase or AWS)."""
+        return (
+            self.filebase_endpoint
+            or self.aws_s3_endpoint_url
+            or "https://s3.filebase.com"
+        )
+
+    @property
+    def s3_bucket(self) -> str:
+        """Returns the effective S3 bucket name."""
+        return self.filebase_bucket or self.s3_attachments_bucket
+
+    @property
+    def s3_access_key(self) -> str:
+        """Returns the effective S3 access key ID."""
+        return self.filebase_access_key or self.aws_access_key_id
+
+    @property
+    def s3_secret_key(self) -> str:
+        """Returns the effective S3 secret access key."""
+        return self.filebase_secret_key or self.aws_secret_access_key
+
+    @property
+    def s3_region(self) -> str:
+        """Returns the effective S3 region."""
+        return self.filebase_region or self.aws_region or "us-east-1"
+
 
 @lru_cache
 def get_settings() -> Settings:

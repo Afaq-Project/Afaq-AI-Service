@@ -23,6 +23,7 @@ dependencies = [
     "anthropic>=1.6,<2.0",
     "langchain-google-genai>=2.0,<4.0",
     "crawl4ai>=0.9.4",
+    "boto3>=1.43.123",
 ]
 
 [dependency-groups]
