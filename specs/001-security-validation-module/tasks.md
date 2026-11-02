@@ -125,10 +125,11 @@
 - [ ] T037 Run ArchUnit architectural tests and layer boundary verification: `uv run pytest tests/architecture/ -v`
 - [ ] T038 Run KG-ARCHMAP layer and cycle analysis: `archmap analyze src --fail-on-cycles --fail-on-layer-violations`
 - [ ] T039 Run Enola architectural drift check: `enola check . --fail-on=layers,cycles`
-- [ ] T040 Run Gitleaks secret scan: `gitleaks detect --source . -v`
-- [ ] T041 Run Trivy dependency vulnerability audit: `trivy fs . --scanners vuln --pkg-types library --severity HIGH,CRITICAL --skip-db-update`
-- [ ] T042 Run SonarScanner static security and quality gate: `sonar-scanner -Dsonar.projectKey=afaq-ai-service`
-- [ ] T043 Execute quickstart validation script and smoke test verification per `specs/001-security-validation-module/quickstart.md`
+- [ ] T040 Run Pact consumer contract verification and deployment gate: `./scripts/pact_check.sh`
+- [ ] T041 Run Gitleaks secret scan: `gitleaks detect --source . -v`
+- [ ] T042 Run Trivy dependency vulnerability audit: `trivy fs . --scanners vuln --pkg-types library --severity HIGH,CRITICAL --skip-db-update`
+- [ ] T043 Run SonarScanner static security and quality gate: `sonar-scanner -Dsonar.projectKey=afaq-ai-service`
+- [ ] T044 Execute quickstart validation script and smoke test verification per `specs/001-security-validation-module/quickstart.md`
 
 ---
 
@@ -172,7 +173,7 @@ flowchart TD
 - **Phase 5 User Story 3 Tests**:
   - `T024` [P] (`test_file_validator_service.py`) and `T025` [P] (`test_security_threats.py`) can be authored in parallel.
 - **Phase 6 Polish & Verification**:
-  - `T032` [P], `T033` [P], `T034` [P] can run in parallel before running unified quality gates (`T035`–`T043`).
+  - `T032` [P], `T033` [P], `T034` [P] can run in parallel before running unified quality gates (`T035`–`T044`).
 
 ---
 

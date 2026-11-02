@@ -233,6 +233,13 @@ SonarQube runs locally inside a Docker container. All binaries and environment v
 
 ### 5.6 Contract Verification & Deployment Gate (Pact)
 Pact is used to prevent breaking contract changes between `afaq-ai-service` and consumer services (e.g., `afaq-main-service`).
+
+* **Endpoint Immutability & Contract Protection Rule:**
+  * During development, Pact tests are run continuously to ensure that no existing endpoint or contract details are inadvertently altered or broken.
+  * **Strict Agent Restriction:** If any Pact test fails, the agent is **strictly prohibited from modifying the test or contract to force a pass**.
+  * Modifying a Pact test or contract is permitted **only** if such an action is part of an official task specifically designated for that endpoint (such as its initial construction or maintenance requested directly by the user).
+  * Any modification to an existing endpoint contract must be **explicitly requested and approved by the user**.
+
 * **Pact Broker URL:** `http://localhost:9292` (Docker container, no auth required).
 * **CLI Tool:** `pact-broker-cli` v0.9.0 (installed at `/home/abood/.pact/bin/pact-broker-cli`, in `PATH`).
 * **Mandatory Flag:** Always specify `--broker-base-url http://localhost:9292`.
