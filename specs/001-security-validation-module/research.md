@@ -68,3 +68,22 @@ AI models synthesizing extraction templates often generate deeply nested `:has()
 ### Alternatives Considered
 * **`python-magic` (`libmagic`):** Requires system C libraries (`libmagic-dev`), which can lead to deployment inconsistencies across environments.
 * **Full streaming decompression into temporary files:** Vulnerable to disk-space exhaustion (Zip Bomb).
+
+---
+
+## 5. Prompt Injection Shielding & Architectural Boundaries
+
+### Decision
+Implement a purely deterministic, zero-LLM defense inside `ContentSanitizer.wrap_untrusted_prompt`:
+1. **Delimiter Breakout Escaping:** Replace any literal occurrence of `</untrusted_web_content>` in untrusted input with `&lt;/untrusted_web_content&gt;` to prevent attackers from breaking out of data sandbox boundaries.
+2. **Regex Trigger Defanging:** Match canonical prompt-override patterns (e.g. `\b(ignore|disregard|forget|override)\s+(all\s+)?(previous|prior|above|system)\s+(instructions|prompts|rules|commands)\b`), substituting matches with `[REDACTED_SUSPICIOUS_PROMPT]` and setting `is_suspicious_prompt=True`.
+3. **XML Encapsulation:** Wrap the defanged content inside `<untrusted_web_content origin_domain="..." hash="...">` tags.
+4. **Strict Architectural Separation:** System prompt formulation and priming (instructing the model to treat `<untrusted_web_content>` strictly as passive data) belong strictly to the **scraping / LLM module** (`src/modules/scraping/`), preserving clean module boundaries and zero semantic overhead in the security module.
+
+### Rationale
+* **Zero Semantic Overhead:** The security module operates at microsecond speeds ($<1$ms) and remains 100% deterministic without needing natural language "comprehension".
+* **Resilience Against Data Loss:** Neutralizing trigger phrases avoids false-positive drops of legitimate educational listings that happen to contain phrases like "disregard previous application cycles".
+
+### Alternatives Considered
+* **Calling a Secondary LLM for "Toxicity / Jailbreak" Classification:** Strongly rejected. Calling an LLM inside the security gateway would add 1–2 seconds of latency, incur API costs per page, and introduce a circular vulnerability where the classifier LLM itself is subject to prompt injection.
+

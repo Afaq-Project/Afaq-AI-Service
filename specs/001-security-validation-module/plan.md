@@ -118,7 +118,7 @@ tests/modules/security/
 2. Implement `src/modules/security/content_sanitizer.py`:
    * `to_clean_text`: HTML stripping, entity decoding, control char deletion, NFKC normalization.
    * `sanitize_html`: Rust `nh3` integration with strict tag/attr whitelist and link hardening.
-   * `wrap_untrusted_prompt`: XML boundary wrapping, SHA256 hashing, prompt injection regex defanging (`FR-017`).
+   * `wrap_untrusted_prompt`: XML boundary wrapping, SHA256 hashing, delimiter breakout escaping (`</untrusted_web_content>` -> `&lt;/untrusted_web_content&gt;`), and compiled regex trigger defanging (`FR-017`). (Note: LLM system prompt formulation and priming belong strictly to the downstream scraping module).
    * `validate_template_schema`: Pydantic shape validation, `soupsieve` compilation, complexity linter, and 200ms dry-run timeout.
 3. Validate tests pass.
 

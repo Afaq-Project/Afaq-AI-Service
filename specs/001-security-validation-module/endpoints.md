@@ -78,7 +78,8 @@ The security module serves as the internal universal gateway. All crawling worke
   * `raw_content` (`str`): Raw scraped DOM or text.
   * `origin_domain` (`str`): Source website domain for metadata tagging.
 * **Outputs:**
-  * Returns: `SanitizedContent` with prompt isolation tags `<untrusted_web_content origin_domain="..." hash="...">` and defanged injection phrases (`[REDACTED_SUSPICIOUS_PROMPT]`).
+  * Returns: `SanitizedContent` with delimiter breakout tags escaped (`&lt;/untrusted_web_content&gt;`), high-confidence trigger patterns defanged to `[REDACTED_SUSPICIOUS_PROMPT]`, and enclosed within `<untrusted_web_content origin_domain="..." hash="...">` XML tags ready for ingestion by the scraping module.
+  * *Note:* System prompt instructions and LLM orchestration belong strictly to the calling scraping module (`src/modules/scraping/`).
 
 ---
 

@@ -12,7 +12,7 @@
 
 ### Session 2026-11-01
 - Q: Should the LinkValidator accept an optional base URL to automatically resolve relative paths into canonical absolute URLs, or should it require callers to provide pre-resolved absolute URLs? → A: Option A: Accept an optional `base_url` parameter; if provided and `raw_url` is relative, resolve it canonically via RFC 3986 relative reference resolution before validating; if omitted and `raw_url` is relative, reject with `ERR_INVALID_SCHEME`.
-- Q: When the content sanitizer detects high-confidence prompt injection trigger phrases in scraped web content, should the pipeline immediately abort the listing extraction with an error, or should it neutralize the phrases and continue extraction with an audit flag? → A: Option A: Neutralize & Flag (Resilient Extraction): Redact or defang high-confidence trigger patterns (e.g., `[REDACTED_SUSPICIOUS_PROMPT]`), set `is_suspicious_prompt=True` in validation metadata, and continue extraction safely inside the XML prompt barrier.
+- Q: When the content sanitizer detects high-confidence prompt injection trigger phrases in scraped web content, should the pipeline immediately abort the listing extraction with an error, or should it neutralize the phrases and continue extraction with an audit flag? → A: Option A: Neutralize & Flag (Resilient Extraction): Redact or defang high-confidence trigger patterns (replacing with `[REDACTED_SUSPICIOUS_PROMPT]`), escape closing delimiter tags (`&lt;/untrusted_web_content&gt;`), set `is_suspicious_prompt=True` in validation metadata, and encapsulate within `<untrusted_web_content>` XML boundaries without aborting extraction. (Note: LLM system prompt formulation and priming belong strictly to the downstream scraping module, not the security module).
 - Q: How should the FileValidator generate the S3 object key when a downloadable document's URL path lacks a recognizable filename or uses dynamic query parameters (e.g., `/download.php?id=9481`)? → A: Option A: Content-Disposition with Hash Fallback: Sanitize filename from `Content-Disposition` header; if missing, fall back to `{sha256[:16]}.{detected_ext}` based on verified magic bytes.
 
 ---
@@ -48,7 +48,7 @@ So that stored listings contain zero executable scripts, phishing vectors, or pr
 **Acceptance Scenarios**:
 1. **Given** raw scraped text for structured fields (title, grant amount, deadline) containing HTML tags, control characters, or entities, **When** passed through `to_clean_text`, **Then** all markup is stripped, entities are decoded, unicode is normalized (NFKC), and clean plain text is returned.
 2. **Given** rich scholarship descriptions containing formatted HTML, **When** processed by `sanitize_html`, **Then** only allowed tags (`p`, `br`, `strong`, `em`, `ul`, `ol`, `li`, `table`, `tr`, `td`) are preserved, all script/style/iframe tags and event handlers are eliminated, and links receive `rel="noopener noreferrer nofollow"`.
-3. **Given** raw external HTML submitted to LLM prompt synthesis, **When** wrapped via `wrap_untrusted_prompt`, **Then** the content is isolated inside `<untrusted_web_content origin_domain="..." hash="...">` tags accompanied by explicit prompt instructions forbidding command interpretation.
+3. **Given** raw external HTML submitted for LLM prompt synthesis, **When** wrapped via `wrap_untrusted_prompt`, **Then** any premature closing tags (`</untrusted_web_content>`) are escaped to `&lt;/untrusted_web_content&gt;`, high-confidence trigger patterns are defanged to `[REDACTED_SUSPICIOUS_PROMPT]`, and the content is isolated inside `<untrusted_web_content origin_domain="..." hash="...">` XML boundaries for safe consumption by the scraping module.
 
 ---
 
@@ -106,14 +106,14 @@ So that corrupt schemas or complex nested selectors cannot stall or freeze crawl
 * **FR-007**: System MUST parse `Retry-After` headers on HTTP 429/503 responses, enforcing cool-down periods when wait times exceed 300 seconds.
 * **FR-008**: System MUST strip all HTML/XML tags, decode entities, and normalize unicode (NFKC) for all structured listing fields via `to_clean_text`.
 * **FR-009**: System MUST sanitize rich-text content via `nh3`, enforcing a strict whitelist of educational formatting tags and stripping all scripts, styles, frames, and event handlers.
-* **FR-010**: System MUST encapsulate all untrusted third-party DOMs inside `<untrusted_web_content>` XML boundaries with origin metadata and SHA256 hashes before submitting to LLM prompts.
+* **FR-010**: System MUST encapsulate all untrusted third-party DOMs inside `<untrusted_web_content>` XML boundaries with origin metadata and SHA256 hashes, escaping any internal `</untrusted_web_content>` closing tags to prevent delimiter breakout injection.
 * **FR-011**: System MUST validate AI-generated extraction schemas against Pydantic models with `strict=True` and `extra="forbid"`.
 * **FR-012**: System MUST lint CSS selectors against ReDoS complexity limits (max length 300 chars, max 1 `:has()` depth, max 5 combinators) and enforce a strict 200ms dry-run execution timeout.
 * **FR-013**: System MUST stream-download attachments with a strict 25 MB ceiling, aborting downloads exceeding this limit with `ERR_FILE_SIZE_EXCEEDED`.
 * **FR-014**: System MUST verify true binary magic bytes for allowed attachment types (PDF `%PDF-`, DOCX/XLSX `PK\x03\x04`, JPEG, PNG, WEBP) and unconditionally reject executable signatures (PE `MZ`, ELF, shell scripts).
 * **FR-015**: System MUST inspect zip-based archives without full decompression, enforcing a 100:1 compression ratio cap and a 50 MB total uncompressed size limit (`ERR_ZIP_BOMB_DETECTED`).
 * **FR-016**: System MUST accept an optional `base_url` parameter in URL validation; if provided and the target URL is a relative reference, resolve it canonically using RFC 3986 reference resolution before security inspection. If omitted and the target URL is relative, reject immediately with `ERR_INVALID_SCHEME`.
-* **FR-017**: System MUST scan untrusted web content for high-confidence prompt injection trigger patterns; when detected, defang/neutralize the matched phrase (replacing with `[REDACTED_SUSPICIOUS_PROMPT]`), flag `is_suspicious_prompt=True` on the `SanitizedContent` metadata, and record audit telemetry without dropping the listing extraction.
+* **FR-017**: System MUST scan untrusted web content using compiled regex signatures for high-confidence prompt injection trigger patterns; when detected, defang/neutralize the matched phrase (replacing with `[REDACTED_SUSPICIOUS_PROMPT]`), flag `is_suspicious_prompt=True` on the `SanitizedContent` metadata, and record audit telemetry without dropping the listing extraction.
 * **FR-018**: System MUST derive the suggested S3 object key by sanitizing the filename extracted from the URL path or HTTP `Content-Disposition` header; if neither is present or valid, fall back deterministically to `{sha256[:16]}.{detected_ext}` based on verified magic bytes.
 
 ### Key Entities
@@ -128,6 +128,7 @@ So that corrupt schemas or complex nested selectors cannot stall or freeze crawl
 * **No Direct Database Persistence:** The security module does not read or write directly to Postgres or Prisma tables. It returns pure domain models and validation results to calling services.
 * **No Browser Engine Lifecycle Management:** The module does not manage Playwright browser pools or launch processes; it provides safe arguments and validation guarantees to the crawling engine.
 * **No Paywall / CAPTCHA Bypassing:** The module operates strictly within public domain data bounds, adhering to legal and architectural non-bypass principles.
+* **No LLM System Prompting / Prompt Engineering:** The security module does not author or execute LLM system prompts. System instruction priming (e.g. instructing the LLM to treat `<untrusted_web_content>` as passive data) and LLM invocation belong strictly to the downstream scraping / synthesis module (`src/modules/scraping/`). The security module focuses purely on fast, deterministic content sanitization, delimiter escaping, and regex defanging.
 
 ---
 

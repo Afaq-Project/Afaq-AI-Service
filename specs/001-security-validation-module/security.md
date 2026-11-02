@@ -37,8 +37,10 @@ No string, URL, or byte stream from an external website may be persisted into Po
    * Link Hardening: Links receive `rel="noopener noreferrer nofollow"` and `target="_blank"`.
 
 ### 2.3. Prompt Shielding & Adversarial Instruction Defanging
-* Boundary Tags: Raw DOMs submitted to LLMs are wrapped inside `<untrusted_web_content origin_domain="{domain}" hash="{sha256}">...</untrusted_web_content>`.
-* Trigger Defanging: High-confidence prompt injection phrases (e.g. `"ignore previous instructions"`, `"system override"`) are defanged to `[REDACTED_SUSPICIOUS_PROMPT]` and flagged via `is_suspicious_prompt=True` to preserve valid educational data while eliminating execution risk.
+* **Delimiter Breakout Escaping:** Literal `</untrusted_web_content>` tags found within untrusted content are escaped to `&lt;/untrusted_web_content&gt;` to prevent attackers from breaking out of our XML data sandbox.
+* **Regex Trigger Defanging:** Scans untrusted input with compiled regex signatures for canonical prompt override patterns (e.g. `\b(ignore|disregard|forget|override)\s+(all\s+)?(previous|prior|above|system)\s+(instructions|prompts|rules|commands)\b`), replacing matches with `[REDACTED_SUSPICIOUS_PROMPT]` and setting `is_suspicious_prompt=True` on `SanitizedContent`.
+* **Boundary Encapsulation:** Packages defanged content inside `<untrusted_web_content origin_domain="{domain}" hash="{sha256}">...</untrusted_web_content>`.
+* **Architectural Boundary:** The security module does **not** formulate system prompts or invoke LLMs. Prompt orchestration and system instructions (priming the model to treat `<untrusted_web_content>` as passive text) belong strictly to the **scraping / LLM synthesis module** (`src/modules/scraping/`).
 
 ---
 
