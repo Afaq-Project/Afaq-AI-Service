@@ -19,12 +19,12 @@ Per Constitution v2.3.0 Principle II & III, every single scenario in [`use_cases
 | **UC-05** | IDN Homograph Cyrillic Domain Spoofing | `tests/unit/modules/security/test_link_validator_service.py` | `test_homograph_cyrillic_spoofing_rejected` | Unit |
 | **UC-06** | S3 Naming with Content-Disposition Fallback (`FR-014`)| `tests/unit/modules/security/test_file_validator_service.py` | `test_content_disposition_s3_naming_fallback` | Unit |
 | **UC-07** | Multi-Hop Safe Redirect Chain ($\le 5$ Hops) | `tests/integration/modules/security/test_redirect_traversal.py` | `test_safe_redirect_chain_traversal` | Integration |
-| **UC-08** | Direct SSRF Against AWS Cloud Metadata & Loopback | `tests/unit/modules/security/test_security_threats.py` | `test_ssrf_blocks_imds_and_loopback` | Security Gate |
+| **UC-08** | Direct SSRF Against AWS Cloud Metadata & Loopback | `tests/unit/modules/security/test_security_threats.py` | `test_ssrf_blocks_imds_and_loopback` (subtests: `ipv4`, `ipv6`, `loopback`, `rfc1918`) | Security Gate |
 | **UC-09** | Circular Redirect Loop Trap | `tests/unit/modules/security/test_link_validator_service.py` | `test_circular_redirect_loop_detected` | Unit |
 | **UC-10** | Deep Redirect Chain Exceeding 5 Hops | `tests/unit/modules/security/test_link_validator_service.py` | `test_max_redirects_exceeded_error` | Unit |
-| **UC-11** | Redirect-Based SSRF Pivot | `tests/unit/modules/security/test_security_threats.py` | `test_redirect_ssrf_pivot_intercepted` | Security Gate |
+| **UC-11** | Redirect-Based SSRF Pivot | `tests/unit/modules/security/test_security_threats.py` | `test_redirect_ssrf_pivot` | Security Gate |
 | **UC-12** | Disguised Windows Executable Attachment | `tests/unit/modules/security/test_security_threats.py` | `test_disguised_executable_rejected` | Security Gate |
-| **UC-13** | High-Ratio Zip Bomb Decompression Attack | `tests/unit/modules/security/test_security_threats.py` | `test_zip_bomb_decompression_guard` | Security Gate |
+| **UC-13** | High-Ratio Zip Bomb Decompression Attack | `tests/unit/modules/security/test_security_threats.py` | `test_zip_bomb_rejection` | Security Gate |
 | **UC-14** | Pathological CSS Selector Exponential Backtracking (ReDoS) | `tests/unit/modules/security/test_security_threats.py` | `test_css_selector_redos_timeout` | Security Gate |
 | **UC-15** | Non-Standard Internal Port Querying | `tests/unit/modules/security/test_link_validator_service.py` | `test_non_standard_ports_rejected` | Unit |
 | **UC-16** | Disallowed Schemes (`file:`, `gopher:`, `data:`) | `tests/unit/modules/security/test_link_validator_service.py` | `test_disallowed_schemes_rejected` | Unit |

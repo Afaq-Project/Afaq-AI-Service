@@ -23,14 +23,13 @@ Build the foundational **Security & Validation Gatekeeper Module** (`src/modules
 * **Storage**: In-memory domain validation. (AWS S3 keys are derived deterministically; database persistence is handled by downstream repositories).
 * **Testing**: `pytest`, `pytest-asyncio`, `pytest-cov`, `archunitpython`.
 * **Target Platform**: Linux server / Docker container (single-process concurrency, RAM $\le 1$ GB).
-* **Performance Goals**:
-  * In-memory validation $<5$ms per check.
-  * CSS selector dry-run timeout $\le 200$ms.
-  * DNS & redirect probes $<500$ms.
+* **Performance Goals & Benchmark Boundary**:
+  * CSS selector dry-run timeout guard $\le 200$ms (algorithmic timeout enforced in code to prevent ReDoS).
+  * System throughput and latency benchmarks (in-memory validation $<5$ms, DNS/redirect probes $<500$ms) are directional targets benchmarked **exclusively via user-configured k6 load test suites**.
+  * **Constitution Principle VI & AGENT.md Compliance:** Automated functional, unit, and integration test suites **MUST NEVER** assert, expect, or enforce execution duration limits or latency SLAs.
 * **Constraints**:
   * 100% of private/loopback/cloud metadata CIDRs intercepted before socket connection.
-  * Zero external network calls during unit testing (deterministic mocked fixtures).
-  * Fast test suite execution ($<15$ seconds locally).
+  * Zero external network calls during unit testing (deterministic mocked fixtures via `unittest.mock` and `httpx.MockTransport`).
 
 ---
 
