@@ -71,19 +71,13 @@ AI models synthesizing extraction templates often generate deeply nested `:has()
 
 ---
 
-## 5. Prompt Injection Shielding & Architectural Boundaries
+## 5. Prompt & Command Injection Defense Delegation
 
 ### Decision
-Implement a purely deterministic, zero-LLM defense inside `ContentSanitizer.wrap_untrusted_prompt`:
-1. **Delimiter Breakout Escaping:** Replace any literal occurrence of `</untrusted_web_content>` in untrusted input with `&lt;/untrusted_web_content&gt;` to prevent attackers from breaking out of data sandbox boundaries.
-2. **Regex Trigger Defanging:** Match canonical prompt-override patterns (e.g. `\b(ignore|disregard|forget|override)\s+(all\s+)?(previous|prior|above|system)\s+(instructions|prompts|rules|commands)\b`), substituting matches with `[REDACTED_SUSPICIOUS_PROMPT]` and setting `is_suspicious_prompt=True`.
-3. **XML Encapsulation:** Wrap the defanged content inside `<untrusted_web_content origin_domain="..." hash="...">` tags.
-4. **Strict Architectural Separation:** System prompt formulation and priming (instructing the model to treat `<untrusted_web_content>` strictly as passive data) belong strictly to the **scraping / LLM module** (`src/modules/scraping/`), preserving clean module boundaries and zero semantic overhead in the security module.
+All prompt injection, command injection handling, XML sandbox packaging (`<untrusted_web_content>`), and delimiter escaping are **strictly delegated to the downstream Scraping & Extraction Module (`src/modules/scraping/`)**. The Security Module contains zero prompt inspection heuristics, zero text redacting, and zero delimiter manipulation.
 
 ### Rationale
-* **Zero Semantic Overhead:** The security module operates at microsecond speeds ($<1$ms) and remains 100% deterministic without needing natural language "comprehension".
-* **Resilience Against Data Loss:** Neutralizing trigger phrases avoids false-positive drops of legitimate educational listings that happen to contain phrases like "disregard previous application cycles".
-
-### Alternatives Considered
-* **Calling a Secondary LLM for "Toxicity / Jailbreak" Classification:** Strongly rejected. Calling an LLM inside the security gateway would add 1–2 seconds of latency, incur API costs per page, and introduce a circular vulnerability where the classifier LLM itself is subject to prompt injection.
+* **Zero Content Mutation:** A security gatekeeper must not alter text or intervene in prompt phrasing. Mutating text risks false positives on legitimate grant descriptions and breaks single-responsibility boundaries.
+* **Context-Aware Defenses in Scraping:** The scraping engine constructs LLM prompts directly and employs strict system instructions (priming models to treat scraped DOM blocks as passive data), where delimiter escaping and prompt packaging naturally belong.
+* **Microsecond Gatekeeper Latency:** Without regex text scanning or prompt heuristics, `LinkValidator`, `FileValidator`, and `SchemaValidator` execute purely deterministic, microsecond-fast checks.
 

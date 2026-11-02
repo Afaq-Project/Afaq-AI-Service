@@ -107,7 +107,6 @@ class TemplateSchemaValidationResult(BaseModel):
 | `ERR_MALICIOUS_FILE_TYPE` | Attachment Safety | `MaliciousFileTypeError` |
 | `ERR_FILE_SIZE_EXCEEDED` | Resource Safety | `FileSizeExceededError` |
 | `ERR_ZIP_BOMB_DETECTED` | Attachment Safety | `ZipBombDetectedError` |
-| `ERR_PROMPT_INJECTION_DETECTED`| AI Safety | `PromptInjectionDetectedError` |
 | `ERR_SCHEMA_SHAPE_INVALID` | Schema Safety | `SchemaShapeInvalidError` |
 | `ERR_SELECTOR_SYNTAX_INVALID` | Selector Safety | `SelectorSyntaxInvalidError` |
 | `ERR_CSS_SELECTOR_REDOS_TIMEOUT`| ReDoS Defense | `CssSelectorReDosTimeoutError` |
