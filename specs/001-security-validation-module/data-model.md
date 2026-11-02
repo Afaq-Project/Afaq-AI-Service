@@ -36,32 +36,7 @@ class ValidatedUrl(BaseModel):
 
 ---
 
-### 1.2. `SanitizedContent`
-Result of text cleaning, HTML sanitization, or LLM prompt shielding.
-
-```python
-class SanitizedContent(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    original_text: str
-    cleaned_text: str
-    original_char_count: int
-    cleaned_char_count: int
-    is_modified: bool
-    stripped_tags: List[str] = Field(default_factory=list)
-    is_suspicious_prompt: bool = False
-    detected_injection_patterns: List[str] = Field(default_factory=list)
-    sanitized_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-```
-
-* **Validation Rules:**
-  * For structured plain text (`to_clean_text`): `cleaned_text` contains 0 markup tags and 0 control characters (`\x00` - `\x1f`), normalized via Unicode NFKC.
-  * For rich HTML (`sanitize_html`): `cleaned_text` contains only whitelisted tags and safe attributes; all links enforce `rel="noopener noreferrer nofollow"`.
-  * When `is_suspicious_prompt=True`, `detected_injection_patterns` documents matched trigger phrases that were defanged to `[REDACTED_SUSPICIOUS_PROMPT]`.
-
----
-
-### 1.3. `FileValidationResult`
+### 1.2. `FileValidationResult`
 Outcome of attachment downloading and binary magic-byte inspection.
 
 ```python
@@ -89,7 +64,7 @@ class FileValidationResult(BaseModel):
 
 ---
 
-### 1.4. `TemplateSchemaValidationResult`
+### 1.3. `TemplateSchemaValidationResult`
 Outcome of extraction template schema and CSS selector safety inspection.
 
 ```python
@@ -110,6 +85,9 @@ class TemplateSchemaValidationResult(BaseModel):
 * **Validation Rules:**
   * `dry_run_latency_ms` $\le 200.0$ milliseconds.
   * Every selector in `selectors_validated` must have length $\le 300$, `:has()` nesting depth $\le 1$, and combinators $\le 5$.
+
+> [!NOTE]
+> **Data Model Boundary:** Models representing cleaned text or sanitized rich HTML are **strictly deferred to the downstream Data Cleaning Pipeline (`src/modules/cleaning/`)**. The security module models are exclusively non-mutating validation and inspection records.
 
 ---
 

@@ -42,48 +42,7 @@ The security module serves as the internal universal gateway. All crawling worke
 
 ---
 
-### 1.2. `ContentSanitizer.to_clean_text`
-* **Signature:**
-  ```python
-  @staticmethod
-  def to_clean_text(raw_input: Optional[str]) -> str:
-  ```
-* **Inputs:**
-  * `raw_input` (`Optional[str]`): Untrusted input string.
-* **Outputs:**
-  * Returns: Cleaned plain text (`str`) with all HTML tags stripped, entities unescaped, control characters deleted, and Unicode normalized to NFKC.
-
----
-
-### 1.3. `ContentSanitizer.sanitize_html`
-* **Signature:**
-  ```python
-  @staticmethod
-  def sanitize_html(raw_html: Optional[str]) -> str:
-  ```
-* **Inputs:**
-  * `raw_html` (`Optional[str]`): Untrusted HTML markup.
-* **Outputs:**
-  * Returns: Sanitized HTML string (`str`) preserving only allowed educational tags (`p`, `br`, `b`, `strong`, `i`, `em`, `ul`, `ol`, `li`, `h3`-`h5`, `table`, `tr`, `td`), stripping all event handlers, styles, scripts, and adding `rel="noopener noreferrer nofollow"`.
-
----
-
-### 1.4. `ContentSanitizer.wrap_untrusted_prompt`
-* **Signature:**
-  ```python
-  @staticmethod
-  def wrap_untrusted_prompt(raw_content: str, origin_domain: str) -> SanitizedContent:
-  ```
-* **Inputs:**
-  * `raw_content` (`str`): Raw scraped DOM or text.
-  * `origin_domain` (`str`): Source website domain for metadata tagging.
-* **Outputs:**
-  * Returns: `SanitizedContent` with delimiter breakout tags escaped (`&lt;/untrusted_web_content&gt;`), high-confidence trigger patterns defanged to `[REDACTED_SUSPICIOUS_PROMPT]`, and enclosed within `<untrusted_web_content origin_domain="..." hash="...">` XML tags ready for ingestion by the scraping module.
-  * *Note:* System prompt instructions and LLM orchestration belong strictly to the calling scraping module (`src/modules/scraping/`).
-
----
-
-### 1.5. `FileValidator.validate_stream`
+### 1.2. `FileValidator.validate_stream`
 * **Signature:**
   ```python
   @staticmethod
@@ -108,7 +67,7 @@ The security module serves as the internal universal gateway. All crawling worke
 
 ---
 
-### 1.6. `ContentSanitizer.validate_template_schema`
+### 1.3. `SchemaValidator.validate_template_schema`
 * **Signature:**
   ```python
   @classmethod
@@ -127,6 +86,23 @@ The security module serves as the internal universal gateway. All crawling worke
   * `SchemaShapeInvalidError` (`ERR_SCHEMA_SHAPE_INVALID`) on Pydantic shape failure.
   * `SelectorSyntaxInvalidError` (`ERR_SELECTOR_SYNTAX_INVALID`) on soupsieve compilation failure.
   * `CssSelectorReDosTimeoutError` (`ERR_CSS_SELECTOR_REDOS_TIMEOUT`) on evaluation latency $> 200$ms.
+
+---
+
+### 1.4. `SchemaValidator.escape_prompt_delimiters`
+* **Signature:**
+  ```python
+  @staticmethod
+  def escape_prompt_delimiters(raw_content: str) -> str:
+  ```
+* **Inputs:**
+  * `raw_content` (`str`): Untrusted scraped text or HTML.
+* **Outputs:**
+  * Returns: Escaped text with `</untrusted_web_content>` replaced by `&lt;/untrusted_web_content&gt;` to prevent XML sandbox breakout.
+  * *Note:* System prompt priming and LLM synthesis are strictly handled by the calling scraping module (`src/modules/scraping/`).
+
+> [!NOTE]
+> **Separation of Concerns:** Content transformation functions (e.g. `to_clean_text`, entity decoding, Unicode NFKC normalization, and `sanitize_html` via `nh3`) are **strictly deferred to the downstream Data Cleaning Pipeline (`src/modules/cleaning/`)**. The security module provides exclusively non-mutating validation and security screening.
 
 ---
 

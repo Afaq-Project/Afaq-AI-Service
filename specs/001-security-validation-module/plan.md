@@ -17,16 +17,14 @@ Build the foundational **Security, Link Validation & Content Sanitization Module
 * **Language/Version**: Python 3.12+ (runtime managed with `uv`).
 * **Primary Dependencies**:
   * `pydantic` v2 (strict immutable schemas with `frozen=True` and `extra="forbid"`).
-  * `nh3` (Mozilla ammonia Rust-backed HTML sanitizer).
   * `soupsieve` (CSS selector parser & compiler).
   * `httpx` (asynchronous HTTP client for redirect inspection).
-  * Standard library: `ipaddress`, `urllib.parse`, `unicodedata`, `zipfile`, `hashlib`, `asyncio`.
+  * Standard library: `ipaddress`, `urllib.parse`, `zipfile`, `hashlib`, `asyncio`.
 * **Storage**: In-memory domain validation. (AWS S3 keys are derived deterministically; database persistence is handled by downstream repositories).
 * **Testing**: `pytest`, `pytest-asyncio`, `pytest-cov`, `archunitpython`.
 * **Target Platform**: Linux server / Docker container (single-process concurrency, RAM $\le 1$ GB).
 * **Performance Goals**:
-  * In-memory text sanitization $<5$ms per field.
-  * Rich HTML sanitization $<20$ms per document.
+  * In-memory validation $<5$ms per check.
   * CSS selector dry-run timeout $\le 200$ms.
   * DNS & redirect probes $<500$ms.
 * **Constraints**:
@@ -74,11 +72,11 @@ src/
 └── modules/
     └── security/
         ├── __init__.py           # Public exports (validators, models, exceptions)
-        ├── models.py             # Pydantic schemas (ValidatedUrl, SanitizedContent, etc.)
+        ├── models.py             # Pydantic schemas (ValidatedUrl, FileValidationResult, etc.)
         ├── exceptions.py         # SecurityValidationError exception hierarchy
         ├── link_validator.py     # RFC 3986, Anti-SSRF, DNS Pinning, Safe Redirects
-        ├── content_sanitizer.py  # to_clean_text, sanitize_html (nh3), prompt shields, ReDoS
-        └── file_validator.py     # Stream limits, magic bytes, zip bomb, S3 key derivation
+        ├── file_validator.py     # Stream limits, magic bytes, zip bomb, S3 key derivation
+        └── schema_validator.py   # AI template schema validation, ReDoS linter & delimiter escaping
 
 src/api/routes/v1/
 └── security.py                   # Optional diagnostic inspect-url route (thin controller)
@@ -87,8 +85,8 @@ tests/modules/security/
 ├── __init__.py
 ├── test_models.py                # Schema validation & immutability tests
 ├── test_link_validator.py        # RFC 3986, Anti-SSRF, DNS rebinding, redirect traps
-├── test_content_sanitizer.py     # Plain text, nh3 HTML whitelist, prompt defanging, ReDoS
 ├── test_file_validator.py        # Magic bytes, PE/ELF drop, zip-bomb ratio checks
+├── test_schema_validator.py      # Pydantic shape, soupsieve ReDoS, delimiter escaping
 └── test_security_threats.py      # STRIDE negative test cases & failure injection
 ```
 
@@ -99,27 +97,25 @@ tests/modules/security/
 ### Phase 1: Domain Models & Exception Hierarchy
 1. Author `tests/modules/security/test_models.py`.
 2. Implement `src/modules/security/exceptions.py` with `SecurityValidationError` hierarchy and standardized error codes.
-3. Implement `src/modules/security/models.py` (`ValidatedUrl`, `SanitizedContent`, `FileValidationResult`, `TemplateSchemaValidationResult`).
+3. Implement `src/modules/security/models.py` (`ValidatedUrl`, `FileValidationResult`, `TemplateSchemaValidationResult`).
 4. Validate tests pass.
 
 ### Phase 2: Link Verification & Anti-SSRF Subsystem
 1. Author `tests/modules/security/test_link_validator.py`.
 2. Implement `src/modules/security/link_validator.py`:
    * RFC 3986 parsing, port/scheme whitelist, path traversal rejection.
-   * `base_url` relative reference resolution (`FR-016`).
+   * `base_url` relative reference resolution (`FR-014`).
    * Asynchronous DNS resolution + private CIDR matching (`is_private_or_reserved_ip`).
    * Chromium `--host-resolver-rules` DNS pinning rule production.
    * Safe 5-hop redirect traversal with circular loop detection and per-hop SSRF re-checks.
    * HTTP 429/503 `Retry-After` evaluation.
 3. Validate tests pass.
 
-### Phase 3: Content Sanitization & Prompt Shielding Subsystem
-1. Author `tests/modules/security/test_content_sanitizer.py`.
-2. Implement `src/modules/security/content_sanitizer.py`:
-   * `to_clean_text`: HTML stripping, entity decoding, control char deletion, NFKC normalization.
-   * `sanitize_html`: Rust `nh3` integration with strict tag/attr whitelist and link hardening.
-   * `wrap_untrusted_prompt`: XML boundary wrapping, SHA256 hashing, delimiter breakout escaping (`</untrusted_web_content>` -> `&lt;/untrusted_web_content&gt;`), and compiled regex trigger defanging (`FR-017`). (Note: LLM system prompt formulation and priming belong strictly to the downstream scraping module).
-   * `validate_template_schema`: Pydantic shape validation, `soupsieve` compilation, complexity linter, and 200ms dry-run timeout.
+### Phase 3: Schema & ReDoS Safety Subsystem
+1. Author `tests/modules/security/test_schema_validator.py`.
+2. Implement `src/modules/security/schema_validator.py`:
+   * `escape_prompt_delimiters`: Replaces literal `</untrusted_web_content>` with `&lt;/untrusted_web_content&gt;`.
+   * `validate_template_schema`: Pydantic shape validation (`strict=True`, `extra="forbid"`), `soupsieve` compilation, complexity linter, and 200ms dry-run timeout.
 3. Validate tests pass.
 
 ### Phase 4: File & Attachment Inspection Subsystem
@@ -129,7 +125,7 @@ tests/modules/security/
    * Pure-Python magic-byte slicing (`%PDF-`, `PK\x03\x04`, JPEG, PNG, WEBP).
    * Unconditional rejection of executable headers (`MZ`, `\x7fELF`, `#!`).
    * Zip-bomb inspection without full decompression (100:1 ratio, 50 MB cap).
-   * S3 key derivation with Content-Disposition parsing and hash fallback (`FR-018`).
+   * S3 key derivation with Content-Disposition parsing and hash fallback (`FR-015`).
 3. Validate tests pass.
 
 ### Phase 5: Module Public API & Diagnostic Route

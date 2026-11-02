@@ -13,25 +13,23 @@ Per Constitution v2.1.0 Principle II & III, every single scenario in [`use_cases
 | Use Case ID | Scenario Name | Test Target File | Test Function Name | Verification Gate |
 | :--- | :--- | :--- | :--- | :--- |
 | **UC-01** | Standard Public Educational Link Validation | `tests/modules/security/test_link_validator.py` | `test_valid_public_https_url_resolves` | Unit |
-| **UC-02** | Structured Field Plain-Text Cleaning | `tests/modules/security/test_content_sanitizer.py`| `test_to_clean_text_strips_html_and_normalizes` | Unit |
-| **UC-03** | Rich Description Safe HTML Sanitization | `tests/modules/security/test_content_sanitizer.py`| `test_sanitize_html_preserves_allowed_tags_strips_xss` | Unit |
+| **UC-02** | AI Extraction Template Schema Dry-Run Verification | `tests/modules/security/test_schema_validator.py`| `test_validate_template_schema_success` | Unit |
+| **UC-03** | Prompt Sandbox Delimiter Breakout Protection | `tests/modules/security/test_schema_validator.py`| `test_escape_prompt_delimiters` | Unit |
 | **UC-04** | Official Scholarship PDF Attachment Inspection | `tests/modules/security/test_file_validator.py` | `test_valid_pdf_magic_bytes_and_s3_key` | Unit |
-| **UC-05** | AI Extraction Template Schema Dry-Run Verification | `tests/modules/security/test_content_sanitizer.py`| `test_validate_template_schema_success` | Unit |
-| **UC-06** | Relative URL Reference Resolution (`FR-016`) | `tests/modules/security/test_link_validator.py` | `test_relative_url_resolves_with_base_url` | Unit |
-| **UC-07** | IDN Homograph Cyrillic Domain Spoofing | `tests/modules/security/test_link_validator.py` | `test_homograph_cyrillic_spoofing_rejected` | Unit |
-| **UC-08** | S3 Naming with Content-Disposition Fallback (`FR-018`)| `tests/modules/security/test_file_validator.py` | `test_content_disposition_s3_naming_fallback` | Unit |
-| **UC-09** | Prompt Injection Defanging & Audit Flagging (`FR-017`)| `tests/modules/security/test_content_sanitizer.py`| `test_prompt_injection_defanged_and_flagged` | Unit |
-| **UC-10** | Multi-Hop Safe Redirect Chain ($\le 5$ Hops) | `tests/modules/security/test_link_validator.py` | `test_safe_redirect_chain_traversal` | Integration |
-| **UC-11** | Direct SSRF Against AWS Cloud Metadata & Loopback | `tests/modules/security/test_security_threats.py` | `test_ssrf_blocks_imds_and_loopback` | Security Gate |
-| **UC-12** | Circular Redirect Loop Trap | `tests/modules/security/test_link_validator.py` | `test_circular_redirect_loop_detected` | Unit |
-| **UC-13** | Deep Redirect Chain Exceeding 5 Hops | `tests/modules/security/test_link_validator.py` | `test_max_redirects_exceeded_error` | Unit |
-| **UC-14** | Redirect-Based SSRF Pivot | `tests/modules/security/test_security_threats.py` | `test_redirect_ssrf_pivot_intercepted` | Security Gate |
-| **UC-15** | Disguised Windows Executable Attachment | `tests/modules/security/test_security_threats.py` | `test_disguised_executable_rejected` | Security Gate |
-| **UC-16** | High-Ratio Zip Bomb Decompression Attack | `tests/modules/security/test_security_threats.py` | `test_zip_bomb_decompression_guard` | Security Gate |
-| **UC-17** | Pathological CSS Selector Exponential Backtracking (ReDoS) | `tests/modules/security/test_security_threats.py` | `test_css_selector_redos_timeout` | Security Gate |
-| **UC-18** | Non-Standard Internal Port Querying | `tests/modules/security/test_link_validator.py` | `test_non_standard_ports_rejected` | Unit |
-| **UC-19** | Disallowed Schemes (`file:`, `gopher:`, `data:`) | `tests/modules/security/test_link_validator.py` | `test_disallowed_schemes_rejected` | Unit |
-| **UC-20** | HTTP 429 Rate Limiting with High Retry-After | `tests/modules/security/test_link_validator.py` | `test_http_429_retry_after_cooldown` | Integration |
+| **UC-05** | Relative URL Reference Resolution (`FR-014`) | `tests/modules/security/test_link_validator.py` | `test_relative_url_resolves_with_base_url` | Unit |
+| **UC-06** | IDN Homograph Cyrillic Domain Spoofing | `tests/modules/security/test_link_validator.py` | `test_homograph_cyrillic_spoofing_rejected` | Unit |
+| **UC-07** | S3 Naming with Content-Disposition Fallback (`FR-015`)| `tests/modules/security/test_file_validator.py` | `test_content_disposition_s3_naming_fallback` | Unit |
+| **UC-08** | Multi-Hop Safe Redirect Chain ($\le 5$ Hops) | `tests/modules/security/test_link_validator.py` | `test_safe_redirect_chain_traversal` | Integration |
+| **UC-09** | Direct SSRF Against AWS Cloud Metadata & Loopback | `tests/modules/security/test_security_threats.py` | `test_ssrf_blocks_imds_and_loopback` | Security Gate |
+| **UC-10** | Circular Redirect Loop Trap | `tests/modules/security/test_link_validator.py` | `test_circular_redirect_loop_detected` | Unit |
+| **UC-11** | Deep Redirect Chain Exceeding 5 Hops | `tests/modules/security/test_link_validator.py` | `test_max_redirects_exceeded_error` | Unit |
+| **UC-12** | Redirect-Based SSRF Pivot | `tests/modules/security/test_security_threats.py` | `test_redirect_ssrf_pivot_intercepted` | Security Gate |
+| **UC-13** | Disguised Windows Executable Attachment | `tests/modules/security/test_security_threats.py` | `test_disguised_executable_rejected` | Security Gate |
+| **UC-14** | High-Ratio Zip Bomb Decompression Attack | `tests/modules/security/test_security_threats.py` | `test_zip_bomb_decompression_guard` | Security Gate |
+| **UC-15** | Pathological CSS Selector Exponential Backtracking (ReDoS) | `tests/modules/security/test_security_threats.py` | `test_css_selector_redos_timeout` | Security Gate |
+| **UC-16** | Non-Standard Internal Port Querying | `tests/modules/security/test_link_validator.py` | `test_non_standard_ports_rejected` | Unit |
+| **UC-17** | Disallowed Schemes (`file:`, `gopher:`, `data:`) | `tests/modules/security/test_link_validator.py` | `test_disallowed_schemes_rejected` | Unit |
+| **UC-18** | HTTP 429 Rate Limiting with High Retry-After | `tests/modules/security/test_link_validator.py` | `test_http_429_retry_after_cooldown` | Integration |
 
 ---
 

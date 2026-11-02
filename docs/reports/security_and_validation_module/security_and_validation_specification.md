@@ -14,22 +14,22 @@ Operating an autonomous, web-scale scraping engine involves ingesting unvetted, 
 6. **IDN Homograph & Punycode Attacks:** Visually deceptive internationalized domain names spoofing legitimate universities or government portals.
 
 ### 1.2. Architectural Mandate
-* **Universal Gate:** No URL can be crawled, fetched, or resolved, and no content or file can be stored in the database or AWS S3, without traversing this module.
+* **Pure Gatekeeper Principle:** The security module acts strictly as a non-mutating gatekeeper. It evaluates inputs (URLs, files, schemas) against security invariants: if safe, it allows them through unmutated; if dangerous, it rejects immediately with a standardized error code and alert.
+* **Zero In-Module Content Mutation:** The security module does **not** alter, format, clean, or normalize data. Content transformation (stripping HTML tags, decoding entities, Unicode NFKC normalization, date/currency parsing) is strictly deferred to the downstream **Data Cleaning & Normalization Pipeline** (`src/modules/cleaning/`).
 * **Fail-Secure Principle:** Any validation failure defaults to immediate rejection, source or listing flagging, zero AI cost expenditure, and structured audit telemetry.
-* **Strict Plain-Text vs. Safe Rich-Text Separation:** Structured metadata fields (titles, funding amounts, deadlines, organization names) are stripped of all formatting and stored strictly as plain text. Rich descriptions are sanitized via high-performance, Rust-backed AST parsers (`nh3`).
 
 ---
 
 ## 2. Module Architecture & Directory Structure
 
-The security module resides under `src/modules/security/` as a self-contained, high-performance domain:
+The security module resides under `src/modules/security/` as a self-contained, high-performance, non-mutating domain:
 
 ```
 src/modules/security/
-├── __init__.py               # Public API exports (validators, sanitizers, error codes)
+├── __init__.py               # Public API exports (validators, models, error codes)
 ├── link_validator.py         # RFC 3986 syntax, Anti-SSRF, DNS verification & Redirect Inspector
-├── content_sanitizer.py      # Plain-text stripper, Safe HTML sanitizer (nh3), Prompt shielding
-├── file_validator.py         # Magic-byte inspection, streaming limits, S3 key derivation
+├── file_validator.py         # Magic-byte inspection, streaming limits, zip bomb, S3 key
+├── schema_validator.py       # Pydantic schema validation, CSS ReDoS linter & delimiter escaping
 ├── models.py                 # Pydantic models for validation results & security metrics
 └── exceptions.py             # Domain-specific security exception hierarchy
 ```
@@ -124,72 +124,22 @@ Validated Safe URL Object
 
 ---
 
-## 4. Content Sanitization Subsystem (`ContentSanitizer`)
+## 4. Extraction Schema & ReDoS Safety Subsystem (`SchemaValidator`)
 
-The `ContentSanitizer` cleans and shields all extracted textual data, structured attributes, DOM fragments, and LLM communication payloads.
-
-### 4.1. Strict Plain-Text Enforcement (`to_clean_text`)
-Structured fields must never store markup, entities, or executable code. Fields subject to plain-text enforcement include:
-* Opportunity Title, Provider/University Name, Host Country.
-* Funding Type, Currency, Grant Amount / Stipend.
-* Deadline dates, Academic Degrees, Study Fields.
-
-**Cleaning Operations:**
-1. Strips all HTML/XML tags completely using fast tokenization.
-2. Unescapes HTML entities (`&amp;` $\rightarrow$ `&`, `&quot;` $\rightarrow$ `"`, `&#x27;` $\rightarrow$ `'`).
-3. Strips non-printable ASCII control characters (`\x00` - `\x1f`, except standard line breaks and tabs).
-4. Normalizes Unicode to **NFKC** (Canonical Decomposition followed by Canonical Composition) to prevent zero-width obfuscation and homoglyph mutations.
-5. Collapses redundant consecutive whitespace and trims leading/trailing spaces.
-
-### 4.2. Safe Rich-Text Sanitization (`sanitize_html`)
-Where scholarship descriptions, eligibility criteria, or application procedures require formatted presentation (e.g. paragraphs, bullet lists, tables), HTML is parsed and sanitized using `nh3` (the Python binding for Mozilla's Rust-based `ammonia` library):
-
-* **Allowed Tags Whitelist:**
-  `p`, `br`, `b`, `strong`, `i`, `em`, `u`, `ul`, `ol`, `li`, `h3`, `h4`, `h5`, `blockquote`, `table`, `thead`, `tbody`, `tr`, `th`, `td`.
-* **Prohibited Tags (Permanently Stripped):**
-  `script`, `style`, `iframe`, `frame`, `object`, `embed`, `applet`, `svg`, `math`, `form`, `input`, `button`, `meta`, `link`.
-* **Allowed Attributes:**
-  * Global: `dir` (`ltr`, `rtl`), `lang`.
-  * Table: `colspan`, `rowspan`.
-* **Prohibited Attributes (Permanently Stripped):**
-  All event handlers (`onload`, `onclick`, `onerror`, `onmouseover`), `style` inline tags, `class`, `id`.
-* **URL Sanitization on Links (`a` tags if permitted):**
-  * Allowed URL protocols: strictly `http`, `https`, `mailto`.
-  * `javascript:`, `data:`, `vbscript:` URIs are unconditionally deleted.
-  * Adds `rel="noopener noreferrer nofollow"` and `target="_blank"` automatically.
-
-### 4.3. LLM Prompt Injection Shielding (`wrap_untrusted_prompt`)
-During Stage 0 (Architectural Mapping) and Stage 1 (Template Synthesis), raw external DOM skeletons are sent to LLMs (Gemini). Malicious third parties can embed adversarial instructions into web pages to manipulate LLM outputs.
-
-**Deterministic Security Module Architecture (Pure & Fast, No Semantic LLM Dependency):**
-The security module is a fast, deterministic Python component without natural language "comprehension". It shields against prompt injection through three non-semantic, zero-LLM mechanisms:
-
-1. **Delimiter Breakout Escaping:**
-   To prevent an attacker from prematurely closing our isolation block, any occurrence of literal `</untrusted_web_content>` in untrusted input is escaped:
-   ```python
-   sanitized_content = raw_content.replace(
-       "</untrusted_web_content>", "&lt;/untrusted_web_content&gt;"
-   )
-   ```
-
-2. **High-Confidence Regex Defanging & Tagging:**
-   Scans untrusted input against compiled regular expression signatures of canonical instruction-override templates (e.g., `\b(ignore|disregard|forget|override)\s+(all\s+)?(previous|prior|above|system)\s+(instructions|prompts|rules|commands)\b`, role-play hijacks, or system overrides).
-   * **Action:** Replaces matched patterns with `[REDACTED_SUSPICIOUS_PROMPT]`.
-   * **Audit Telemetry:** Sets `is_suspicious_prompt=True` and populates `detected_injection_patterns` in `SanitizedContent` metadata.
-   * **Resilience:** Avoids false-positive listing drops (e.g. academic notes saying "disregard previous forms") by defanging the directive while allowing data extraction to continue safely.
-
-3. **Structural XML Encapsulation:**
-   Encapsulates the defanged content within explicit XML isolation boundaries with origin metadata and content hash:
-   ```xml
-   <untrusted_web_content origin_domain="target-site.com" hash="sha256_hash">
-   ... defanged content ...
-   </untrusted_web_content>
-   ```
+The `SchemaValidator` verifies candidate extraction templates, enforces CSS complexity limits, and provides delimiter breakout protection before execution.
 
 > [!NOTE]
-> **Architectural Boundary Separation:** The security module does **not** author, manage, or invoke LLM prompts. Prompt orchestration and system instructions belong strictly to the **scraping / LLM synthesis module** (`src/modules/scraping/` / `src/modules/infrastructure/llm/`). The scraping module receives this securely packaged XML block from the security module, injects its own system prompt priming (instructing the model to treat `<untrusted_web_content>` as passive data), and enforces strict Pydantic JSON schema parsing on the response.
+> **Separation of Concerns:** Data transformations such as plain-text extraction (`to_clean_text`), HTML entity decoding (`&amp;` $\rightarrow$ `&`), Unicode NFKC normalization, and safe HTML rich-text filtering (`sanitize_html` via `nh3`) are **strictly deferred to the downstream Data Cleaning Pipeline (`src/modules/cleaning/`)**. The security module acts exclusively as a non-mutating gatekeeper.
 
-### 4.4. Template Schema Safety Validator & CSS ReDoS Linter (`validate_template_schema`)
+### 4.1. Delimiter Breakout Protection (`escape_prompt_delimiters`)
+To prevent untrusted web content from prematurely closing XML sandbox enclosures during downstream LLM prompt synthesis, any occurrence of literal `</untrusted_web_content>` closing tags in raw content is escaped:
+```python
+escaped_content = raw_content.replace(
+    "</untrusted_web_content>", "&lt;/untrusted_web_content&gt;"
+)
+```
+
+### 4.2. Template Schema Safety Validator & CSS ReDoS Linter (`validate_template_schema`)
 Before any AI-generated `template_schema` is saved into `scraping_templates` or executed via `JsonCssExtractionStrategy`, it must traverse a strict 4-stage validation pipeline:
 
 #### 1. Stage A: JSON Extraction & Syntax Integrity
@@ -430,54 +380,40 @@ class LinkValidator:
         ...
 ```
 
-### 7.4. Content Sanitizer Interface (`src/modules/security/content_sanitizer.py`)
+### 7.4. Schema & ReDoS Validator Interface (`src/modules/security/schema_validator.py`)
 
 ```python
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+from src.modules.security.models import TemplateSchemaValidationResult
 
-class ContentSanitizer:
-    """Enforces plain-text purity, safe HTML sanitization, and prompt shielding."""
+class SchemaValidator:
+    """Non-mutating gatekeeper for AI extraction template schemas and CSS ReDoS safety."""
 
-    @staticmethod
-    def to_clean_text(raw_input: Optional[str]) -> str:
-        """
-        Strict plain-text enforcement for structured fields:
-        - Strips all HTML/XML tags
-        - Unescapes HTML entities
-        - Normalizes Unicode (NFKC)
-        - Removes non-printable control characters
-        - Trims and normalizes whitespace
-        """
-        ...
+    MAX_SELECTOR_LENGTH: int = 300
+    MAX_HAS_DEPTH: int = 1
+    MAX_COMBINATORS: int = 5
+    DRY_RUN_TIMEOUT_SEC: float = 0.200  # 200 milliseconds
 
     @staticmethod
-    def sanitize_html(raw_html: Optional[str]) -> str:
+    def escape_prompt_delimiters(raw_content: str) -> str:
         """
-        Safe rich-text sanitization for formatted descriptions using Rust-backed nh3:
-        - Strips scripts, iframes, styles, objects, inputs, svg
-        - Whitelists safe structural tags (p, ul, ol, li, h3-h5, b, i, table)
-        - Cleans all event handlers and inline styles
-        - Enforces rel="noopener noreferrer nofollow" on links
+        Escapes literal </untrusted_web_content> tags in raw strings to prevent
+        data sandbox breakout in downstream LLM prompt synthesis.
         """
-        ...
+        return raw_content.replace("</untrusted_web_content>", "&lt;/untrusted_web_content&gt;")
 
-    @staticmethod
-    def wrap_untrusted_prompt(raw_content: str, origin_domain: str) -> str:
-        """
-        Wraps third-party scraped content inside secure isolation boundaries:
-        - Encloses in <untrusted_web_content> tags
-        - Appends SHA256 integrity hash
-        - Neutralizes high-risk injection trigger phrases
-        """
-        ...
-
-    @staticmethod
-    def validate_template_schema(schema_dict: Dict[str, Any]) -> None:
+    @classmethod
+    async def validate_template_schema(
+        cls,
+        schema_dict: Dict[str, Any],
+        sample_html: Optional[str] = None
+    ) -> TemplateSchemaValidationResult:
         """
         Validates AI-generated template schema:
-        - Verifies JsonCssExtractionStrategy structure
-        - Checks CSS selectors for illegal syntax or injection
-        - Rejects dangerous XPath expressions
+        - Enforces Pydantic structural shape (strict=True, extra="forbid")
+        - Compiles CSS selectors via soupsieve
+        - Lints combinator depth and complexity limits
+        - Evaluates against sample HTML within 200ms dry-run timeout
         """
         ...
 ```

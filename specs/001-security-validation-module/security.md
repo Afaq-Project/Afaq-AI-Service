@@ -19,27 +19,16 @@
 
 ---
 
-## 2. Sanitization & Defanging Architecture
+## 2. Gatekeeper Defense & Isolation Architecture
 
-### 2.1. Ingestion Isolation Rule
-No string, URL, or byte stream from an external website may be persisted into Postgres or dispatched to an LLM prompt without traversing this module.
+### 2.1. Pure Gatekeeper Invariant
+The security module acts strictly as a non-mutating gatekeeper. It evaluates inputs (URLs, streams, schemas) against security invariants: if safe, it allows them through unmutated; if dangerous, it rejects immediately with a standardized error code.
 
-### 2.2. Dual Sanitization Pipeline
-1. **Structured Metadata (Plain-Text Only):**
-   * Fields: `title`, `provider`, `host_country`, `amount`, `deadline`, `degree`, `field_of_study`.
-   * Engine: `ContentSanitizer.to_clean_text()`.
-   * Transformation: Strip tags $\rightarrow$ decode entities $\rightarrow$ delete control characters (`\x00` - `\x1f`) $\rightarrow$ Unicode NFKC normalization $\rightarrow$ whitespace collapse.
-2. **Formatted Descriptions (Rich-Text Safe HTML):**
-   * Fields: `description_html`, `eligibility_html`, `benefits_html`, `application_process_html`.
-   * Engine: `ContentSanitizer.sanitize_html()` using `nh3`.
-   * Permitted Tags: `p`, `br`, `b`, `strong`, `i`, `em`, `u`, `ul`, `ol`, `li`, `h3`, `h4`, `h5`, `blockquote`, `table`, `thead`, `tbody`, `tr`, `th`, `td`.
-   * Strictly Prohibited & Stripped: `script`, `style`, `iframe`, `frame`, `object`, `embed`, `applet`, `svg`, `math`, `form`, `input`, `button`, `meta`, `link`.
-   * Link Hardening: Links receive `rel="noopener noreferrer nofollow"` and `target="_blank"`.
+> [!NOTE]
+> **Data Cleaning Separation:** Content transformations (plain-text stripping, HTML entity decoding, Unicode NFKC normalization, and rich-text HTML sanitization via `nh3`) are **strictly deferred to the downstream Data Cleaning Pipeline (`src/modules/cleaning/`)**.
 
-### 2.3. Prompt Shielding & Adversarial Instruction Defanging
-* **Delimiter Breakout Escaping:** Literal `</untrusted_web_content>` tags found within untrusted content are escaped to `&lt;/untrusted_web_content&gt;` to prevent attackers from breaking out of our XML data sandbox.
-* **Regex Trigger Defanging:** Scans untrusted input with compiled regex signatures for canonical prompt override patterns (e.g. `\b(ignore|disregard|forget|override)\s+(all\s+)?(previous|prior|above|system)\s+(instructions|prompts|rules|commands)\b`), replacing matches with `[REDACTED_SUSPICIOUS_PROMPT]` and setting `is_suspicious_prompt=True` on `SanitizedContent`.
-* **Boundary Encapsulation:** Packages defanged content inside `<untrusted_web_content origin_domain="{domain}" hash="{sha256}">...</untrusted_web_content>`.
+### 2.2. Prompt Sandbox Delimiter Breakout Protection
+* **Delimiter Breakout Escaping:** Literal `</untrusted_web_content>` tags found within untrusted content are escaped to `&lt;/untrusted_web_content&gt;` so untrusted text cannot prematurely terminate data sandbox enclosures during downstream LLM prompt synthesis.
 * **Architectural Boundary:** The security module does **not** formulate system prompts or invoke LLMs. Prompt orchestration and system instructions (priming the model to treat `<untrusted_web_content>` as passive text) belong strictly to the **scraping / LLM synthesis module** (`src/modules/scraping/`).
 
 ---
@@ -57,9 +46,7 @@ The following automated negative test cases must be authored and passing before 
 7. `test_port_whitelist`: Ports `22`, `25`, `6379`, `8080`, `9200` $\rightarrow$ `ERR_INVALID_PORT`.
 8. `test_circular_redirect`: Redirect loop `A -> B -> A` $\rightarrow$ `ERR_CIRCULAR_REDIRECT`.
 9. `test_redirect_ssrf_pivot`: `https://public.com/redir` redirecting to `169.254.169.254` $\rightarrow$ `ERR_SSRF_ATTEMPT_BLOCKED`.
-10. `test_html_stripping_xss`: `<script>alert(1)</script><img src=x onerror=alert(1)>` $\rightarrow$ clean text.
-11. `test_nh3_html_sanitization`: Preserves safe tags, strips event handlers and `javascript:` URIs.
-12. `test_prompt_injection_redaction`: Replaces trigger phrases and sets `is_suspicious_prompt=True`.
-13. `test_file_magic_bytes_pdf`: Valid `%PDF-` passes; disguised PE (`MZ`) fails with `ERR_MALICIOUS_FILE_TYPE`.
-14. `test_zip_bomb_rejection`: Uncompressed $>50$ MB or ratio $>100:1$ $\rightarrow$ `ERR_ZIP_BOMB_DETECTED`.
-15. `test_css_selector_redos_timeout`: Combinator backtracking selector exceeds 200ms $\rightarrow$ `ERR_CSS_SELECTOR_REDOS_TIMEOUT`.
+10. `test_delimiter_escaping_breakout_prevention`: Replaces `</untrusted_web_content>` with `&lt;/untrusted_web_content&gt;`.
+11. `test_file_magic_bytes_pdf`: Valid `%PDF-` passes; disguised PE (`MZ`) fails with `ERR_MALICIOUS_FILE_TYPE`.
+12. `test_zip_bomb_rejection`: Uncompressed $>50$ MB or ratio $>100:1$ $\rightarrow$ `ERR_ZIP_BOMB_DETECTED`.
+13. `test_css_selector_redos_timeout`: Combinator backtracking selector exceeds 200ms $\rightarrow$ `ERR_CSS_SELECTOR_REDOS_TIMEOUT`.
