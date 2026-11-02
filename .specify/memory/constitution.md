@@ -1,11 +1,10 @@
 <!--
 Sync Impact Report:
-- Version change: v2.0.0 -> v2.1.0
-- Bump Rationale: Minor governance addition establishing a mandatory precautionary rule requiring the AI agent to actively read AGENT.md when executing any SpecKit workflow.
-- Modified Principles: None
+- Version change: v2.1.0 -> v2.2.0
+- Bump Rationale: Minor governance addition establishing docs/architecture/ARCHITECTURAL_RULES_AND_BOUNDARIES.md as the authoritative living boundary catalog across SpecKit workflows and aligning domain invariants with the pure gatekeeper model.
+- Modified Principles: Principle V & Core Domain Invariants
 - Added Sections:
-  - Mandatory Precautionary Reading of AGENT.md (Section 1).
-  - Principle V: Precautionary Operational Context Ingestion (AGENT.md Mandate) (Section 3).
+  - Reference to living architectural boundaries catalog (Section 1).
 - Removed Sections: None
 - Follow-up TODOs: None
 -->
@@ -18,12 +17,13 @@ This Constitution serves as the authoritative governance document for **requirem
 
 * **Separation of Concerns:**
   * General development workflows, static analysis tooling commands, binary locations, and pre-commit security pipelines are governed exclusively by [`AGENT.md`](file:///home/abood/Project/Afaq/Afaq-AI-Service/AGENT.md).
+  * System architectural rules, component definitions, module boundaries, and automated tool enforcement mechanisms are governed exclusively by the living catalog [`docs/architecture/ARCHITECTURAL_RULES_AND_BOUNDARIES.md`](file:///home/abood/Project/Afaq/Afaq-AI-Service/docs/architecture/ARCHITECTURAL_RULES_AND_BOUNDARIES.md).
   * Feature planning, requirement specifications, test-driven designs, task structures, and human review governance are governed exclusively by this **Constitution**.
 
-* **Mandatory Precautionary Reading of AGENT.md:**
-  * Whenever the AI agent initiates or executes any SpecKit command or feature planning workflow (including `/speckit-specify`, `/speckit-plan`, `/speckit-tasks`, `/speckit-implement`, etc.), the agent **MUST** actively read [`AGENT.md`](file:///home/abood/Project/Afaq/Afaq-AI-Service/AGENT.md).
+* **Mandatory Precautionary Reading of AGENT.md & Architecture Rules:**
+  * Whenever the AI agent initiates or executes any SpecKit command or feature planning workflow (including `/speckit-specify`, `/speckit-plan`, `/speckit-tasks`, `/speckit-implement`, etc.), the agent **MUST** actively read [`AGENT.md`](file:///home/abood/Project/Afaq/Afaq-AI-Service/AGENT.md) and verify compliance with [`docs/architecture/ARCHITECTURAL_RULES_AND_BOUNDARIES.md`](file:///home/abood/Project/Afaq/Afaq-AI-Service/docs/architecture/ARCHITECTURAL_RULES_AND_BOUNDARIES.md).
   * Although the environment or prompt may automatically load `AGENT.md`, this explicit reading rule serves as a mandatory precautionary guardrail.
-  * **Rationale:** Actively ingesting `AGENT.md` ensures that the agent remains continuously aligned with current architectural rules, boundary definitions, pre-commit quality gates, and git branching policies across all stages of feature specification and task execution.
+  * **Rationale:** Actively ingesting these documents ensures that the agent remains continuously aligned with current architectural rules, boundary definitions, pre-commit quality gates, and git branching policies across all stages of feature specification and task execution.
 
 ---
 
@@ -87,7 +87,7 @@ specs/<feature-name>/
 * **Purpose:** Proactive, pre-implementation threat modeling and mitigation design.
 * **Requirements:**
   * Identifies potential security vectors during the design stage (SSRF, Injection, ReDoS, XSS in scraped content, unauthorized data access).
-  * Explicit Sanitization Strategy: Specifies exact input cleaning rules, Rust-backed `nh3` HTML scrubbing, and data masking.
+  * Explicit Defense & Boundary Strategy: Specifies exact pre-scrape security verification rules, delimiter escaping, and strict boundary separation between non-mutating gatekeepers and downstream data cleaning pipelines.
   * Authentication & Permission Gates: Documents required API keys, headers, and access restrictions.
   * Automated Security Test Cases: Defines the negative tests and fuzz cases that must be executed to verify the security mitigations.
 
@@ -139,7 +139,7 @@ specs/<feature-name>/
 Regardless of feature scope, all feature specifications and plans MUST uphold the service's foundational operational constraints:
 
 * **Public Data Only & Zero Paywall Bypass:** Afaq-AI-Service collects exclusively publicly accessible educational grant and scholarship listings. Automated bypassing of authentication paywalls, CAPTCHAs, or access controls is strictly prohibited.
-* **Zero-Trust Ingestion Isolation:** Every scraped string, URL, and attachment MUST traverse the `src/modules/security/` gateway (RFC 3986 URL parsing, SSRF private IP blocking, ReDoS selector checks, and `nh3` HTML sanitization) before persistence.
+* **Zero-Trust Gatekeeper Inspection:** Every scraped string, URL, and attachment MUST traverse the `src/modules/security/` gateway (RFC 3986 URL parsing, SSRF private IP blocking, ReDoS selector checks, and binary magic-byte inspection) before network processing. In accordance with [`docs/architecture/ARCHITECTURAL_RULES_AND_BOUNDARIES.md`](file:///home/abood/Project/Afaq/Afaq-AI-Service/docs/architecture/ARCHITECTURAL_RULES_AND_BOUNDARIES.md), the security module operates strictly as a pure, non-mutating gatekeeper, while rich HTML sanitization (`nh3`), entity decoding, and Unicode NFKC normalization are strictly deferred to downstream cleaning pipelines.
 * **Single-Browser Low-Memory Bound:** Crawling operations MUST operate within a single-process concurrency ceiling (`max_concurrent_crawls = 1`) and adhere to the $\le 1$GB container RAM limit.
 * **Raw vs. Cleaning Separation:** Raw extraction tables store unmutated publisher text. Canonical taxonomy normalization and translation are strictly reserved for downstream pipeline modules.
 
@@ -154,4 +154,4 @@ Regardless of feature scope, all feature specifications and plans MUST uphold th
   * **PATCH (1.0.X):** Wording clarifications, template formatting, and non-semantic corrections.
 * **Review Cycle:** The constitution must be verified against delivered features at the completion of each major track.
 
-**Version**: 2.1.0 | **Ratified**: 2026-11-01 | **Last Amended**: 2026-11-01
+**Version**: 2.2.0 | **Ratified**: 2026-11-01 | **Last Amended**: 2026-11-02
