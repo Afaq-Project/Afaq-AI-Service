@@ -129,17 +129,12 @@ Validated Safe URL Object
 The `SchemaValidator` verifies candidate extraction templates, enforces CSS complexity limits, and provides delimiter breakout protection before execution.
 
 > [!NOTE]
-> **Separation of Concerns:** Data transformations such as plain-text extraction (`to_clean_text`), HTML entity decoding (`&amp;` $\rightarrow$ `&`), Unicode NFKC normalization, and safe HTML rich-text filtering (`sanitize_html` via `nh3`) are **strictly deferred to the downstream Data Cleaning Pipeline (`src/modules/cleaning/`)**. The security module acts exclusively as a non-mutating gatekeeper.
+> **Separation of Concerns:** 
+> 1. **Data Transformations:** Plain-text extraction (`to_clean_text`), HTML entity decoding (`&amp;` $\rightarrow$ `&`), Unicode NFKC normalization, and safe HTML rich-text filtering (`sanitize_html` via `nh3`) are **strictly deferred to the downstream Data Cleaning Pipeline (`src/modules/cleaning/`)**.
+> 2. **Prompt Boundary Packaging:** XML delimiter escaping (`</untrusted_web_content>` $\rightarrow$ `&lt;/untrusted_web_content&gt;`) and system prompt engineering belong strictly to the **Scraping / Prompt Builder module (`src/modules/scraping/`)**.
+> 3. The security module acts exclusively as a non-mutating gatekeeper.
 
-### 4.1. Delimiter Breakout Protection (`escape_prompt_delimiters`)
-To prevent untrusted web content from prematurely closing XML sandbox enclosures during downstream LLM prompt synthesis, any occurrence of literal `</untrusted_web_content>` closing tags in raw content is escaped:
-```python
-escaped_content = raw_content.replace(
-    "</untrusted_web_content>", "&lt;/untrusted_web_content&gt;"
-)
-```
-
-### 4.2. Template Schema Safety Validator & CSS ReDoS Linter (`validate_template_schema`)
+### 4.1. Template Schema Safety Validator & CSS ReDoS Linter (`validate_template_schema`)
 Before any AI-generated `template_schema` is saved into `scraping_templates` or executed via `JsonCssExtractionStrategy`, it must traverse a strict 4-stage validation pipeline:
 
 #### 1. Stage A: JSON Extraction & Syntax Integrity
@@ -393,14 +388,6 @@ class SchemaValidator:
     MAX_HAS_DEPTH: int = 1
     MAX_COMBINATORS: int = 5
     DRY_RUN_TIMEOUT_SEC: float = 0.200  # 200 milliseconds
-
-    @staticmethod
-    def escape_prompt_delimiters(raw_content: str) -> str:
-        """
-        Escapes literal </untrusted_web_content> tags in raw strings to prevent
-        data sandbox breakout in downstream LLM prompt synthesis.
-        """
-        return raw_content.replace("</untrusted_web_content>", "&lt;/untrusted_web_content&gt;")
 
     @classmethod
     async def validate_template_schema(

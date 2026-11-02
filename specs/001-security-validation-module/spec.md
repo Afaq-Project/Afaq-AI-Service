@@ -12,7 +12,7 @@
 
 ### Session 2026-11-01
 - Q: Should the LinkValidator accept an optional base URL to automatically resolve relative paths into canonical absolute URLs, or should it require callers to provide pre-resolved absolute URLs? → A: Option A: Accept an optional `base_url` parameter; if provided and `raw_url` is relative, resolve it canonically via RFC 3986 relative reference resolution before validating; if omitted and `raw_url` is relative, reject with `ERR_INVALID_SCHEME`.
-- Q: When the content sanitizer detects high-confidence prompt injection trigger phrases in scraped web content, should the pipeline immediately abort the listing extraction with an error, or should it neutralize the phrases and continue extraction with an audit flag? → A: Option A: Neutralize & Flag (Resilient Extraction): Redact or defang high-confidence trigger patterns (replacing with `[REDACTED_SUSPICIOUS_PROMPT]`), escape closing delimiter tags (`&lt;/untrusted_web_content&gt;`), set `is_suspicious_prompt=True` in validation metadata, and encapsulate within `<untrusted_web_content>` XML boundaries without aborting extraction. (Note: LLM system prompt formulation and priming belong strictly to the downstream scraping module, not the security module).
+- Q: When the content sanitizer detects high-confidence prompt injection trigger phrases in scraped web content, should the pipeline immediately abort the listing extraction with an error, or should it neutralize the phrases and continue extraction with an audit flag? → A: Prompt injection defense belongs to the downstream scraping / extraction pipeline: The scraping module isolates content within an XML sandbox and primes LLM system instructions to treat the block as passive data. The security module is strictly a non-mutating gatekeeper and does not alter text or inspect prompt phrasing. Delimiter escaping is handled during prompt assembly in the scraping module.
 - Q: How should the FileValidator generate the S3 object key when a downloadable document's URL path lacks a recognizable filename or uses dynamic query parameters (e.g., `/download.php?id=9481`)? → A: Option A: Content-Disposition with Hash Fallback: Sanitize filename from `Content-Disposition` header; if missing, fall back to `{sha256[:16]}.{detected_ext}` based on verified magic bytes.
 
 ---
@@ -67,27 +67,12 @@ So that disguised malware, executable scripts, and resource-exhaustion archives 
 
 ---
 
-### User Story 4 - Prompt Sandbox Delimiter Breakout Protection (Priority: P2)
-
-As an adaptive scraping pipeline coordinator,  
-I want to escape XML delimiter closing tags from untrusted scraped content,  
-So that raw text cannot prematurely close `<untrusted_web_content>` sandbox boundaries when packaged for downstream LLM prompt synthesis.
-
-* **Why this priority**: Attackers can embed literal `</untrusted_web_content>` tags into target DOMs to break out of data enclosures during AI extraction.
-* **Independent Test**: Can be tested independently by passing strings containing `</untrusted_web_content>` into `escape_prompt_delimiters`, asserting conversion to `&lt;/untrusted_web_content&gt;`.
-
-**Acceptance Scenarios**:
-1. **Given** raw external HTML submitted for LLM prompt synthesis containing `</untrusted_web_content>`, **When** passed through `escape_prompt_delimiters`, **Then** the closing tag is escaped to `&lt;/untrusted_web_content&gt;` without altering other content.
-
----
-
 ### Edge Cases
 
 * **DNS Rebinding Attacks (TOCTOU):** An attacker configures a domain that resolves to a public IP on initial DNS lookup, but instantly resolves to `127.0.0.1` or `169.254.169.254` during the HTTP request. Handled by Chromium DNS pinning (`--host-resolver-rules=MAP <host> <verified-ip>`).
 * **IDN Homograph Spoofing:** Domains using mixed Cyrillic/Latin scripts (e.g., `oxfоrd.edu` where 'о' is Cyrillic) are converted to ASCII Punycode (`xn--...`) and validated against confusables.
 * **HTTP 429 / 503 Rate Limiting:** When remote servers respond with 429/503 and a `Retry-After` header $>300$ seconds, the validator flags the source for cool-down (`ERR_RATE_LIMITED_COOLDOWN`) and releases the distributed lock.
 * **Disguised Script Extensions:** Files named `form.pdf` containing HTML/JavaScript or executable headers are rejected via magic-byte inspection.
-* **Delimiter Breakout Injection:** Raw content containing literal `</untrusted_web_content>` closing tags is escaped to prevent sandbox breakouts.
 
 ---
 
@@ -102,14 +87,13 @@ So that raw text cannot prematurely close `<untrusted_web_content>` sandbox boun
 * **FR-005**: System MUST produce Chromium-compatible host resolver mapping strings (`--host-resolver-rules`) for verified public IPs to prevent DNS rebinding.
 * **FR-006**: System MUST traverse HTTP redirects safely up to a maximum of 5 hops, detecting circular references (`ERR_CIRCULAR_REDIRECT`) and re-validating each hop against the Anti-SSRF filter.
 * **FR-007**: System MUST parse `Retry-After` headers on HTTP 429/503 responses, enforcing cool-down periods when wait times exceed 300 seconds.
-* **FR-008**: System MUST escape any literal `</untrusted_web_content>` tags found within untrusted content (`&lt;/untrusted_web_content&gt;`) to prevent delimiter breakout attacks.
-* **FR-009**: System MUST validate AI-generated extraction schemas against Pydantic models with `strict=True` and `extra="forbid"`.
-* **FR-010**: System MUST lint CSS selectors against ReDoS complexity limits (max length 300 chars, max 1 `:has()` depth, max 5 combinators) and enforce a strict 200ms dry-run execution timeout.
-* **FR-011**: System MUST stream-download attachments with a strict 25 MB ceiling, aborting downloads exceeding this limit with `ERR_FILE_SIZE_EXCEEDED`.
-* **FR-012**: System MUST verify true binary magic bytes for allowed attachment types (PDF `%PDF-`, DOCX/XLSX `PK\x03\x04`, JPEG, PNG, WEBP) and unconditionally reject executable signatures (PE `MZ`, ELF, shell scripts).
-* **FR-013**: System MUST inspect zip-based archives without full decompression, enforcing a 100:1 compression ratio cap and a 50 MB total uncompressed size limit (`ERR_ZIP_BOMB_DETECTED`).
-* **FR-014**: System MUST accept an optional `base_url` parameter in URL validation; if provided and the target URL is a relative reference, resolve it canonically using RFC 3986 reference resolution before security inspection. If omitted and the target URL is relative, reject immediately with `ERR_INVALID_SCHEME`.
-* **FR-015**: System MUST derive the suggested S3 object key by sanitizing the filename extracted from the URL path or HTTP `Content-Disposition` header; if neither is present or valid, fall back deterministically to `{sha256[:16]}.{detected_ext}` based on verified magic bytes.
+* **FR-008**: System MUST validate AI-generated extraction schemas against Pydantic models with `strict=True` and `extra="forbid"`.
+* **FR-009**: System MUST lint CSS selectors against ReDoS complexity limits (max length 300 chars, max 1 `:has()` depth, max 5 combinators) and enforce a strict 200ms dry-run execution timeout.
+* **FR-010**: System MUST stream-download attachments with a strict 25 MB ceiling, aborting downloads exceeding this limit with `ERR_FILE_SIZE_EXCEEDED`.
+* **FR-011**: System MUST verify true binary magic bytes for allowed attachment types (PDF `%PDF-`, DOCX/XLSX `PK\x03\x04`, JPEG, PNG, WEBP) and unconditionally reject executable signatures (PE `MZ`, ELF, shell scripts).
+* **FR-012**: System MUST inspect zip-based archives without full decompression, enforcing a 100:1 compression ratio cap and a 50 MB total uncompressed size limit (`ERR_ZIP_BOMB_DETECTED`).
+* **FR-013**: System MUST accept an optional `base_url` parameter in URL validation; if provided and the target URL is a relative reference, resolve it canonically using RFC 3986 reference resolution before security inspection. If omitted and the target URL is relative, reject immediately with `ERR_INVALID_SCHEME`.
+* **FR-014**: System MUST derive the suggested S3 object key by sanitizing the filename extracted from the URL path or HTTP `Content-Disposition` header; if neither is present or valid, fall back deterministically to `{sha256[:16]}.{detected_ext}` based on verified magic bytes.
 
 ### Key Entities
 
@@ -120,6 +104,7 @@ So that raw text cannot prematurely close `<untrusted_web_content>` sandbox boun
 ### Non-Goals & Out-of-Scope Boundaries
 
 * **No Content Mutation or Data Cleaning:** The security module is strictly a non-mutating gatekeeper. It does not strip tags, decode entities, normalize Unicode, or parse values; these transformations are deferred to the downstream Data Cleaning Pipeline (`src/modules/cleaning/`).
+* **No Prompt Delimiter Escaping or Formatting:** The security module does not escape XML tags or format LLM prompts. Delimiter escaping (e.g. `</untrusted_web_content>` $\rightarrow$ `&lt;/untrusted_web_content&gt;`) and sandbox encapsulation belong strictly to prompt assembly in the downstream Scraping / Extraction module (`src/modules/scraping/`).
 * **No Direct Database Persistence:** The security module does not read or write directly to Postgres or Prisma tables. It returns pure domain models and validation results to calling services.
 * **No Browser Engine Lifecycle Management:** The module does not manage Playwright browser pools or launch processes; it provides safe arguments and validation guarantees to the crawling engine.
 * **No Paywall / CAPTCHA Bypassing:** The module operates strictly within public domain data bounds, adhering to legal and architectural non-bypass principles.

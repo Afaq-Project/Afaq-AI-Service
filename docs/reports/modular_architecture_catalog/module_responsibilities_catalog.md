@@ -50,15 +50,14 @@ Canonical Clean Data (Postgres Persistence & AI Matching)
      * CSS selector syntax compilation via `soupsieve`.
      * CSS complexity limits (max length 300, max 1 `:has()` depth, max 5 combinators).
      * 200ms dry-run execution timeout against ReDoS backtracking bombs.
-  4. **Delimiter Escaping:**
-     * Escapes literal `</untrusted_web_content>` tags to `&lt;/untrusted_web_content&gt;` so untrusted text cannot break out of data sandbox boundaries.
 * **Explicitly Prohibited Actions (Forbidden in this Module):**
   * ❌ **NO Data Mutation or Formatting:** Does NOT strip tags from text, decode HTML entities (`&amp;`), or normalize Unicode (NFKC).
+  * ❌ **NO Prompt Delimiter Escaping or Text Redaction:** Does NOT escape XML tags or modify prompt content. Delimiter escaping and prompt packaging belong strictly to the scraping module.
   * ❌ **NO Database Access:** Must never import repositories, Prisma, or `asyncpg`.
   * ❌ **NO Crawler / Browser Management:** Must never launch Playwright or manage browser processes.
   * ❌ **NO LLM Prompt Orchestration:** Does not construct system prompts or invoke LLM APIs.
 * **Inputs & Outputs:**
-  * *Inputs:* Raw URLs, raw file streams, candidate schema dictionaries, raw DOM strings.
+  * *Inputs:* Raw URLs, raw file streams, candidate schema dictionaries.
   * *Outputs:* Immutable validation results (`ValidatedUrl`, `FileValidationResult`, `TemplateSchemaValidationResult`), or raises `SecurityValidationError`.
 
 ---
@@ -69,7 +68,7 @@ Canonical Clean Data (Postgres Persistence & AI Matching)
   * Single-process Playwright / Crawl4AI browser lifecycle management (concurrency bound = 1, RAM $\le 1$ GB).
   * Consuming Chromium `--host-resolver-rules` from `LinkValidator` to enforce pinned DNS.
   * Orchestrating Stage 0 (Architectural Mapping), Stage 1 (Template Synthesis), and Stage 2 (Batch Crawling).
-  * Constructing LLM prompts with explicit system instructions (priming models to treat `<untrusted_web_content>` as passive data).
+  * Constructing LLM prompts with explicit system instructions (priming models to treat `<untrusted_web_content>` as passive data) and escaping literal delimiter tags (`</untrusted_web_content>` $\rightarrow$ `&lt;/untrusted_web_content&gt;`).
   * Executing validated CSS/JSON extraction strategies against target DOMs.
 * **Explicitly Prohibited Actions:**
   * ❌ Must never dispatch HTTP/browser requests to an unverified URL (must call `LinkValidator` first).

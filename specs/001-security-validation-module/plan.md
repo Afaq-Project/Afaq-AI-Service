@@ -114,7 +114,6 @@ tests/modules/security/
 ### Phase 3: Schema & ReDoS Safety Subsystem
 1. Author `tests/modules/security/test_schema_validator.py`.
 2. Implement `src/modules/security/schema_validator.py`:
-   * `escape_prompt_delimiters`: Replaces literal `</untrusted_web_content>` with `&lt;/untrusted_web_content&gt;`.
    * `validate_template_schema`: Pydantic shape validation (`strict=True`, `extra="forbid"`), `soupsieve` compilation, complexity linter, and 200ms dry-run timeout.
 3. Validate tests pass.
 
@@ -125,7 +124,7 @@ tests/modules/security/
    * Pure-Python magic-byte slicing (`%PDF-`, `PK\x03\x04`, JPEG, PNG, WEBP).
    * Unconditional rejection of executable headers (`MZ`, `\x7fELF`, `#!`).
    * Zip-bomb inspection without full decompression (100:1 ratio, 50 MB cap).
-   * S3 key derivation with Content-Disposition parsing and hash fallback (`FR-015`).
+   * S3 key derivation with Content-Disposition parsing and hash fallback (`FR-014`).
 3. Validate tests pass.
 
 ### Phase 5: Module Public API & Diagnostic Route

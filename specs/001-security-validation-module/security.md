@@ -25,11 +25,8 @@
 The security module acts strictly as a non-mutating gatekeeper. It evaluates inputs (URLs, streams, schemas) against security invariants: if safe, it allows them through unmutated; if dangerous, it rejects immediately with a standardized error code.
 
 > [!NOTE]
-> **Data Cleaning Separation:** Content transformations (plain-text stripping, HTML entity decoding, Unicode NFKC normalization, and rich-text HTML sanitization via `nh3`) are **strictly deferred to the downstream Data Cleaning Pipeline (`src/modules/cleaning/`)**.
-
-### 2.2. Prompt Sandbox Delimiter Breakout Protection
-* **Delimiter Breakout Escaping:** Literal `</untrusted_web_content>` tags found within untrusted content are escaped to `&lt;/untrusted_web_content&gt;` so untrusted text cannot prematurely terminate data sandbox enclosures during downstream LLM prompt synthesis.
-* **Architectural Boundary:** The security module does **not** formulate system prompts or invoke LLMs. Prompt orchestration and system instructions (priming the model to treat `<untrusted_web_content>` as passive text) belong strictly to the **scraping / LLM synthesis module** (`src/modules/scraping/`).
+> 1. **Data Cleaning Separation:** Content transformations (plain-text stripping, HTML entity decoding, Unicode NFKC normalization, and rich-text HTML sanitization) are **strictly deferred to the downstream Data Cleaning Pipeline (`src/modules/cleaning/`)**.
+> 2. **Prompt Assembly & Boundary Packaging:** Delimiter escaping and prompt sandbox packaging (`<untrusted_web_content>`) belong strictly to the **Scraping / Prompt Builder module (`src/modules/scraping/`)**. The security module never mutates content for prompt preparation.
 
 ---
 
@@ -46,7 +43,6 @@ The following automated negative test cases must be authored and passing before 
 7. `test_port_whitelist`: Ports `22`, `25`, `6379`, `8080`, `9200` $\rightarrow$ `ERR_INVALID_PORT`.
 8. `test_circular_redirect`: Redirect loop `A -> B -> A` $\rightarrow$ `ERR_CIRCULAR_REDIRECT`.
 9. `test_redirect_ssrf_pivot`: `https://public.com/redir` redirecting to `169.254.169.254` $\rightarrow$ `ERR_SSRF_ATTEMPT_BLOCKED`.
-10. `test_delimiter_escaping_breakout_prevention`: Replaces `</untrusted_web_content>` with `&lt;/untrusted_web_content&gt;`.
-11. `test_file_magic_bytes_pdf`: Valid `%PDF-` passes; disguised PE (`MZ`) fails with `ERR_MALICIOUS_FILE_TYPE`.
-12. `test_zip_bomb_rejection`: Uncompressed $>50$ MB or ratio $>100:1$ $\rightarrow$ `ERR_ZIP_BOMB_DETECTED`.
-13. `test_css_selector_redos_timeout`: Combinator backtracking selector exceeds 200ms $\rightarrow$ `ERR_CSS_SELECTOR_REDOS_TIMEOUT`.
+10. `test_file_magic_bytes_pdf`: Valid `%PDF-` passes; disguised PE (`MZ`) fails with `ERR_MALICIOUS_FILE_TYPE`.
+11. `test_zip_bomb_rejection`: Uncompressed $>50$ MB or ratio $>100:1$ $\rightarrow$ `ERR_ZIP_BOMB_DETECTED`.
+12. `test_css_selector_redos_timeout`: Combinator backtracking selector exceeds 200ms $\rightarrow$ `ERR_CSS_SELECTOR_REDOS_TIMEOUT`.

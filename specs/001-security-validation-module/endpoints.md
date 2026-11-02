@@ -89,20 +89,11 @@ The security module serves as the internal universal gateway. All crawling worke
 
 ---
 
-### 1.4. `SchemaValidator.escape_prompt_delimiters`
-* **Signature:**
-  ```python
-  @staticmethod
-  def escape_prompt_delimiters(raw_content: str) -> str:
-  ```
-* **Inputs:**
-  * `raw_content` (`str`): Untrusted scraped text or HTML.
-* **Outputs:**
-  * Returns: Escaped text with `</untrusted_web_content>` replaced by `&lt;/untrusted_web_content&gt;` to prevent XML sandbox breakout.
-  * *Note:* System prompt priming and LLM synthesis are strictly handled by the calling scraping module (`src/modules/scraping/`).
-
 > [!NOTE]
-> **Separation of Concerns:** Content transformation functions (e.g. `to_clean_text`, entity decoding, Unicode NFKC normalization, and `sanitize_html` via `nh3`) are **strictly deferred to the downstream Data Cleaning Pipeline (`src/modules/cleaning/`)**. The security module provides exclusively non-mutating validation and security screening.
+> **Separation of Concerns:** 
+> 1. **Content Transformations:** Functions such as `to_clean_text`, entity decoding, Unicode NFKC normalization, and `sanitize_html` are **strictly deferred to the downstream Data Cleaning Pipeline (`src/modules/cleaning/`)**.
+> 2. **Prompt Construction & Delimiter Escaping:** XML boundary wrapping and tag escaping (`</untrusted_web_content>` $\rightarrow$ `&lt;/untrusted_web_content&gt;`) belong strictly to the **Scraping / Prompt Builder module (`src/modules/scraping/`)**.
+> 3. The Security Module provides exclusively non-mutating validation and security screening (`LinkValidator`, `FileValidator`, `SchemaValidator`).
 
 ---
 

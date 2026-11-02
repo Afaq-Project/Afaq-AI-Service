@@ -71,11 +71,9 @@ External Untrusted Web / API
      * Pydantic structural validation (`strict=True`, `extra="forbid"`).
      * CSS selector syntax compilation and ReDoS complexity limiting (max length 300, max 1 `:has()` depth, max 5 combinators).
      * 200ms dry-run execution timeout against ReDoS backtracking bombs.
-  4. **Delimiter Breakout Neutralization:**
-     * Escapes literal `</untrusted_web_content>` tags to `&lt;/untrusted_web_content&gt;` so untrusted DOM text cannot break out of data sandboxes during downstream LLM prompt synthesis.
 * **Strictly Prohibited Actions (Forbidden in this Module):**
   * ❌ **NO Content Mutation or Data Cleaning:** Must NEVER strip HTML tags, decode entities (`&amp;`), or perform Unicode normalization (NFKC) on content.
-  * ❌ **NO Text Redaction or Censorship:** Must NEVER alter prompt text or replace phrases with `[REDACTED_SUSPICIOUS_PROMPT]`.
+  * ❌ **NO Prompt Delimiter Escaping or Text Redaction:** Must NEVER modify content for prompt preparation (e.g., replacing `</untrusted_web_content>` tags or redacting phrases). All prompt formatting and boundary escaping belong strictly to the scraping/prompt builder pipeline.
   * ❌ **NO Database Access:** Must NEVER import repositories, Prisma, or `asyncpg`.
   * ❌ **NO Browser Process Management:** Must NEVER launch Playwright or manage browser processes.
   * ❌ **NO LLM Prompt Orchestration:** Must NEVER compose system prompts or call LLM APIs.
@@ -90,7 +88,7 @@ External Untrusted Web / API
   * Single-process Playwright / Crawl4AI browser lifecycle management (concurrency bound = 1, RAM $\le 1$ GB).
   * Consuming Chromium `--host-resolver-rules` from `LinkValidator` to enforce pinned DNS.
   * Multi-stage crawling execution: Stage 0 (Architectural Mapping), Stage 1 (Template Synthesis), Stage 2 (Batch Crawling).
-  * Constructing LLM prompts with strict system prompt priming (instructing models to treat `<untrusted_web_content>` as passive data and never follow instructions within it).
+  * **LLM Prompt Formatting & Sandbox Packaging:** Constructing LLM prompts, safely escaping literal delimiter tags (e.g. `</untrusted_web_content>` $\rightarrow$ `&lt;/untrusted_web_content&gt;` during prompt serialization), and priming system instructions (directing models to treat `<untrusted_web_content>` strictly as passive data).
   * Executing validated CSS/JSON extraction strategies against target DOMs.
 * **Strictly Prohibited Actions:**
   * ❌ Must NEVER initiate network connections or browser requests to an unverified URL without calling `LinkValidator` first.

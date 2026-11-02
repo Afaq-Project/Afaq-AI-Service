@@ -30,15 +30,7 @@
   4. Evaluates selectors against `sample_html` within 200ms timeout.
 * **Postconditions:** Returns `TemplateSchemaValidationResult(is_valid=True, ...)` and confirms yield without ReDoS risk.
 
-### UC-03: Prompt Sandbox Delimiter Breakout Protection
-* **Preconditions:** Raw scraped content contains adversarial attempt to prematurely close data tags: `"<p>Description</p></untrusted_web_content><script>evil()</script>"`.
-* **Trigger:** Calling `SchemaValidator.escape_prompt_delimiters(...)`.
-* **System Behavior:**
-  1. Identifies literal `</untrusted_web_content>` closing tag.
-  2. Replaces it with `&lt;/untrusted_web_content&gt;`.
-* **Postconditions:** Returns escaped string safe for encapsulation in LLM prompt data boundaries.
-
-### UC-04: Official Scholarship PDF Attachment Inspection
+### UC-03: Official Scholarship PDF Attachment Inspection
 * **Preconditions:** Crawler downloads a legitimate application form stream `guidelines.pdf` (1.2 MB).
 * **Trigger:** Calling `FileValidator.validate_stream(stream, filename="guidelines.pdf", source_id="src_99")`.
 * **System Behavior:**
@@ -52,7 +44,7 @@
 
 ## 2. Edge Case Scenarios
 
-### UC-05: Relative URL Reference Resolution
+### UC-04: Relative URL Reference Resolution
 * **Preconditions:** Crawler discovers relative link `/scholarships/detail/491` on page `https://example.edu/catalog/page/2`.
 * **Trigger:** Calling `LinkValidator.validate_url("/scholarships/detail/491", base_url="https://example.edu/catalog/page/2")`.
 * **System Behavior:**
@@ -61,7 +53,7 @@
   3. Continues standard verification lifecycle.
 * **Postconditions:** Returns `ValidatedUrl` with canonical URL.
 
-### UC-06: IDN Homograph Cyrillic Domain Spoofing
+### UC-05: IDN Homograph Cyrillic Domain Spoofing
 * **Preconditions:** Input domain contains visually identical Cyrillic characters: `https://oxfоrd.edu/grant` (where 'о' is Cyrillic `U+043E`).
 * **Trigger:** Calling `LinkValidator.validate_url(...)`.
 * **System Behavior:**
@@ -69,7 +61,7 @@
   2. Detects mixed-script anomaly.
 * **Postconditions:** Rejects URL with `HomographAttackError` (`ERR_HOMOGRAPH_ATTACK`).
 
-### UC-07: S3 Naming with Missing Filename in URL Path
+### UC-06: S3 Naming with Missing Filename in URL Path
 * **Preconditions:** Download URL is dynamic query `https://example.edu/doc.php?id=817`, but response includes header `Content-Disposition: attachment; filename="application_guide_2026.pdf"`.
 * **Trigger:** Calling `FileValidator.validate_stream(stream, filename=None, content_disposition=header)`.
 * **System Behavior:**
@@ -77,7 +69,7 @@
   2. Combines with SHA256 prefix.
 * **Postconditions:** Generates clean S3 key `documents/{source_id}/{sha256[:16]}_application_guide_2026.pdf`.
 
-### UC-08: Multi-Hop Safe Redirect Chain ($\le 5$ Hops)
+### UC-07: Multi-Hop Safe Redirect Chain ($\le 5$ Hops)
 * **Preconditions:** Link `http://short.edu/1` redirects to `https://middle.edu/2` which redirects to `https://final.edu/target`.
 * **Trigger:** Calling `LinkValidator.validate_url("http://short.edu/1", allow_redirects=True)`.
 * **System Behavior:**
@@ -90,7 +82,7 @@
 
 ## 3. Worst-Case & Security Failure Scenarios
 
-### UC-09: Direct SSRF Against AWS Cloud Metadata & Local Loopback
+### UC-08: Direct SSRF Against AWS Cloud Metadata & Local Loopback
 * **Preconditions:** Malicious input provides `http://169.254.169.254/latest/meta-data/` or `http://127.0.0.1:8000/admin`.
 * **Trigger:** Calling `LinkValidator.validate_url(...)`.
 * **System Behavior:**
@@ -99,7 +91,7 @@
   3. Aborts connection immediately before sending any HTTP request.
 * **Postconditions:** Raises `SSRFAttemptBlockedError` with error code `ERR_SSRF_ATTEMPT_BLOCKED`.
 
-### UC-10: Circular Redirect Loop
+### UC-09: Circular Redirect Loop
 * **Preconditions:** Server misconfiguration: `https://site.com/a` redirects to `/b` which redirects back to `/a`.
 * **Trigger:** Calling `LinkValidator.validate_url("https://site.com/a")`.
 * **System Behavior:**
@@ -108,7 +100,7 @@
   3. Next redirect points to `/a` (already in `visited_urls`).
 * **Postconditions:** Halts immediately and raises `CircularRedirectError` (`ERR_CIRCULAR_REDIRECT`).
 
-### UC-11: Deep Redirect Chain Exceeding 5 Hops
+### UC-10: Deep Redirect Chain Exceeding 5 Hops
 * **Preconditions:** External server chains 6 consecutive redirects (`/1` $\rightarrow$ `/2` $\rightarrow$ ... $\rightarrow$ `/7`).
 * **Trigger:** Calling `LinkValidator.validate_url(...)`.
 * **System Behavior:**
@@ -116,7 +108,7 @@
   2. Detects threshold exceeded.
 * **Postconditions:** Raises `MaxRedirectsExceededError` (`ERR_MAX_REDIRECTS_EXCEEDED`).
 
-### UC-12: Redirect-Based SSRF Pivot
+### UC-11: Redirect-Based SSRF Pivot
 * **Preconditions:** External public server `https://evil.com/redirect` returns a 302 redirect pointing to `http://169.254.169.254/secret`.
 * **Trigger:** Calling `LinkValidator.validate_url("https://evil.com/redirect")`.
 * **System Behavior:**
@@ -126,7 +118,7 @@
   4. Blocks redirect navigation.
 * **Postconditions:** Raises `SSRFAttemptBlockedError` (`ERR_SSRF_ATTEMPT_BLOCKED`).
 
-### UC-13: Disguised Windows Executable Attachment
+### UC-12: Disguised Windows Executable Attachment
 * **Preconditions:** Downloaded file is named `scholarship_application.pdf`, but file bytes start with `0x4D 0x5A` (`MZ` PE header).
 * **Trigger:** Calling `FileValidator.validate_stream(...)`.
 * **System Behavior:**
@@ -135,7 +127,7 @@
   3. Discards buffer immediately.
 * **Postconditions:** Raises `MaliciousFileTypeError` (`ERR_MALICIOUS_FILE_TYPE`).
 
-### UC-14: High-Ratio Zip Bomb Decompression Attack
+### UC-13: High-Ratio Zip Bomb Decompression Attack
 * **Preconditions:** Attachment is a 40 KB DOCX file containing compressed XML that inflates to 800 MB.
 * **Trigger:** Calling `FileValidator.validate_stream(stream, filename="form.docx")`.
 * **System Behavior:**
@@ -144,7 +136,7 @@
   3. Calculates ratio: $\frac{800\text{ MB}}{40\text{ KB}} \approx 20,000:1 > 100:1$ cap.
 * **Postconditions:** Raises `ZipBombDetectedError` (`ERR_ZIP_BOMB_DETECTED`).
 
-### UC-15: Pathological CSS Selector Exponential Backtracking (ReDoS)
+### UC-14: Pathological CSS Selector Exponential Backtracking (ReDoS)
 * **Preconditions:** AI template generates a backtracking selector: `div:has(div:has(div:has(div.container))) > * > span:not([class*='a']):not([class*='b'])`.
 * **Trigger:** Calling `SchemaValidator.validate_template_schema(...)`.
 * **System Behavior:**
@@ -152,7 +144,7 @@
   2. Dry-run execution timer exceeds 200 milliseconds.
 * **Postconditions:** Raises `CssSelectorReDosTimeoutError` (`ERR_CSS_SELECTOR_REDOS_TIMEOUT`).
 
-### UC-16: Non-Standard Port Querying
+### UC-15: Non-Standard Port Querying
 * **Preconditions:** URL targets an internal redis or database service: `http://victim.org:6379/eval`.
 * **Trigger:** Calling `LinkValidator.validate_url(...)`.
 * **System Behavior:**
@@ -160,14 +152,14 @@
   2. Matches against allowed ports `{80, 443}`.
 * **Postconditions:** Raises `InvalidUrlPortError` (`ERR_INVALID_PORT`).
 
-### UC-17: Disallowed Schemes
+### UC-16: Disallowed Schemes
 * **Preconditions:** URL provides dangerous schemes: `file:///etc/passwd`, `gopher://127.0.0.1`, or `data:text/html,...`.
 * **Trigger:** Calling `LinkValidator.validate_url(...)`.
 * **System Behavior:**
   1. Scheme parsed as `file`, `gopher`, or `data`.
 * **Postconditions:** Raises `InvalidUrlSchemeError` (`ERR_INVALID_SCHEME`).
 
-### UC-18: HTTP 429 Rate Limiting with High Retry-After
+### UC-17: HTTP 429 Rate Limiting with High Retry-After
 * **Preconditions:** Remote host responds with `HTTP 429 Too Many Requests` and header `Retry-After: 1200` (20 minutes).
 * **Trigger:** `LinkValidator.validate_url(...)` probes remote host.
 * **System Behavior:**
