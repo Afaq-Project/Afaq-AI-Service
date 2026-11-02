@@ -11,10 +11,10 @@
 | Threat Category | Attack Vector | Target Component | Mitigating Control | Test Verification |
 | :--- | :--- | :--- | :--- | :--- |
 | **Spoofing** | IDN Homograph Cyrillic spoofing (e.g. `oxfоrd.edu`) | `LinkValidator` | Unicode NFKC normalization + ASCII Punycode conversion (`xn--...`) | `test_homograph_attack_rejected` |
-| **Tampering** | Stored XSS via scraped grant description | `ContentSanitizer` | Rust-backed `nh3` AST parser; strict tag/attr whitelist; strip scripts/styles | `test_xss_payloads_stripped` |
-| **Repudiation** | Unaudited SSRF or prompt injection incidents | Security Gateway | Structured security error codes & audit logging in `SanitizedContent` / `ValidatedUrl` | `test_security_audit_metadata` |
+| **Tampering** | Malformed / ReDoS CSS selectors injected into extraction templates | `SchemaValidator` | Selector length $\le 300$, `:has()` depth $\le 1$, combinators $\le 5$, 200ms execution timeout | `test_redos_selector_rejected` |
+| **Repudiation** | Unaudited SSRF or attachment security incidents | Security Gateway | Structured security error codes & audit logging in `ValidatedUrl` / `FileValidationResult` | `test_security_audit_metadata` |
 | **Information Disclosure** | SSRF targeting AWS IMDS (`169.254.169.254`) or VPC internal endpoints | `LinkValidator` | Pre-request DNS resolution + Reserved CIDR block inspection + Chromium DNS pinning | `test_ssrf_cloud_metadata_blocked` |
-| **Denial of Service** | Infinite redirects / ReDoS CSS selectors / Zip Bomb attachments | `LinkValidator`, `ContentSanitizer`, `FileValidator` | 5-hop redirect cap; 200ms selector dry-run timeout; 100:1 ratio cap / 50MB zip cap | `test_circular_redirects_halted`, `test_zip_bomb_dropped`, `test_redos_timeout` |
+| **Denial of Service** | Infinite redirects / ReDoS CSS selectors / Zip Bomb attachments | `LinkValidator`, `SchemaValidator`, `FileValidator` | 5-hop redirect cap; 200ms selector dry-run timeout; 100:1 ratio cap / 50MB zip cap | `test_circular_redirects_halted`, `test_zip_bomb_dropped`, `test_redos_timeout` |
 | **Elevation of Privilege** | Malicious executable (`.exe`, `.sh`) masquerading as application form | `FileValidator` | Pure-python binary magic-byte inspection (`%PDF-`, `PK\x03\x04`); drop PE/ELF | `test_disguised_executable_rejected` |
 
 ---

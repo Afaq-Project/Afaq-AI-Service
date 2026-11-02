@@ -1,4 +1,4 @@
-# Implementation Plan: Security, Link Validation & Content Sanitization Module
+# Implementation Plan: Security, Link & Schema Validation Module
 
 **Branch**: `feat/crawl4ai-adaptive-scraping` | **Date**: 2026-11-01 | **Spec**: [spec.md](spec.md)
 
@@ -8,7 +8,7 @@
 
 ## 1. Summary
 
-Build the foundational **Security, Link Validation & Content Sanitization Module** (`src/modules/security/`) as the mandatory universal gateway for all scraping, extraction, attachment handling, and LLM communication in `Afaq-AI-Service`. The module enforces RFC 3986 syntax normalization, Anti-SSRF private IP blocking, Chromium DNS pinning, safe redirect traversal, Rust-backed `nh3` HTML sanitization, prompt injection shielding, binary magic-byte inspection, and CSS ReDoS protection.
+Build the foundational **Security & Validation Gatekeeper Module** (`src/modules/security/`) as the mandatory universal gateway for all scraping, extraction, attachment handling, and schema verification in `Afaq-AI-Service`. The module enforces RFC 3986 syntax normalization, Anti-SSRF private IP blocking, Chromium DNS pinning, safe redirect traversal, binary magic-byte inspection, zip-bomb defense, and CSS ReDoS protection. All content mutation, HTML cleaning, and entity decoding are strictly deferred to the downstream Data Cleaning Pipeline (`src/modules/cleaning/`).
 
 ---
 

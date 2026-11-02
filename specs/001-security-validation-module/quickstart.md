@@ -8,7 +8,7 @@
 ## 1. Prerequisites
 
 * Python 3.12+ environment managed with `uv`.
-* Runtime dependencies installed (`pydantic`, `nh3`, `beautifulsoup4`, `httpx`).
+* Runtime dependencies installed (`pydantic`, `soupsieve`, `httpx`).
 
 ---
 
