@@ -140,6 +140,7 @@ External Untrusted Web / API
 | **ARCH-005** | `api` routes must NEVER depend directly on database `repositories` | **ArchUnit-Python** & **KG-ARCHMAP** | [`tests/architecture/test_architecture.py`](file:///home/abood/Project/Afaq/Afaq-AI-Service/tests/architecture/test_architecture.py#L12-L23), [`.archmap.toml`](file:///home/abood/Project/Afaq/Afaq-AI-Service/.archmap.toml#L22) |
 | **ARCH-006** | The entire `src/` codebase must be free of circular dependencies | **ArchUnit-Python** | [`tests/architecture/test_architecture.py`](file:///home/abood/Project/Afaq/Afaq-AI-Service/tests/architecture/test_architecture.py#L4-L7) |
 | **ARCH-007** | Security validators must return immutable inspection results and NEVER mutate content | **Pytest Contract Suites** | `tests/unit/security/test_immutability.py` |
+| **ARCH-008** | Functional/unit tests must NEVER assert execution time limits or latency SLAs | **Test Governance & AGENT.md** | Constitution v2.3.0 Principle VI; performance measured exclusively via user-configured `k6` suites |
 
 ---
 

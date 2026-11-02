@@ -51,6 +51,11 @@ This document establishes the architectural principles, coding conventions, test
 * **Zero Local Container Builds:**
   * **Never run `docker build` locally.** Container builds are handled exclusively by CI/CD pipelines.
 
+* **Strict Prohibition on Performance & Execution Time Assertions in Test Suites:**
+  * Functional, unit, integration, and security test suites must **NEVER assert or enforce maximum execution time thresholds, latency SLAs, or test completion time expectations**.
+  * **Rationale:** The system interacts with third-party networks, external DNS, remote web servers, and third-party components whose latencies and response speeds are inherently unpredictable and beyond local control. Enforcing duration limits in automated tests produces brittle, flaky test runs.
+  * **Exclusive Tool for Performance Testing:** The **ONLY** tests permitted to measure performance or latency are **k6 load/performance tests**, which operate strictly based on configuration scripts explicitly provided, managed, and executed by the user.
+
 ---
 
 ## 2. Architectural Boundaries & Living Catalog (Modular Monolith)

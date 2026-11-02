@@ -119,9 +119,8 @@ So that disguised malware, executable scripts, and resource-exhaustion archives 
 * **SC-001**: 100% of tested URLs resolving to private, loopback, or cloud metadata CIDRs (including AWS IMDS `169.254.169.254`) are intercepted and blocked before any network connection is initiated.
 * **SC-002**: 100% of disguised executables, ELF binaries, and scripts are rejected based on magic-byte inspection regardless of spoofed file extensions.
 * **SC-003**: 100% of path traversal tokens and non-whitelisted ports are rejected immediately with standard error codes.
-* **SC-004**: Zero CSS selectors exceeding 200ms execution latency or exceeding ReDoS complexity budgets are accepted into active scraping templates.
-* **SC-005**: Synchronous in-memory validation latency is under 5ms, and DNS/redirect probes complete under 500ms.
-* **SC-006**: Complete test coverage of all defined security error codes across unit and integration suites.
+* **SC-004**: Zero CSS selectors exceeding ReDoS complexity budgets or triggering execution timeouts are accepted into active scraping templates.
+* **SC-005**: Complete test coverage of all defined security error codes across unit and integration suites.
 
 ---
 

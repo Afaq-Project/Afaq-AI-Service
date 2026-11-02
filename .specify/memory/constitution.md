@@ -1,10 +1,10 @@
 <!--
 Sync Impact Report:
-- Version change: v2.1.0 -> v2.2.0
-- Bump Rationale: Minor governance addition establishing ARCHITECTURAL_RULES_AND_BOUNDARIES.md as the authoritative living boundary catalog across SpecKit workflows and aligning domain invariants with the pure gatekeeper model.
-- Modified Principles: Principle V & Core Domain Invariants
+- Version change: v2.2.0 -> v2.3.0
+- Bump Rationale: Establish explicit prohibition on performance/execution time assertions in functional/unit/integration test suites and mandate that performance testing is restricted exclusively to user-configured k6 suites.
+- Modified Principles: Added Principle VI and added domain invariant.
 - Added Sections:
-  - Reference to living architectural boundaries catalog (Section 1).
+  - Principle VI: Prohibition of Performance & Execution Time Assertions in Functional Tests (Section 3).
 - Removed Sections: None
 - Follow-up TODOs: None
 -->
@@ -132,6 +132,11 @@ specs/<feature-name>/
 * **Rule:** Before authoring, modifying, or decomposing any feature artifacts through SpecKit, the agent **MUST** actively read [`AGENT.md`](file:///home/abood/Project/Afaq/Afaq-AI-Service/AGENT.md) to cross-reference technical constraints, verification commands, and operational boundaries.
 * **Precautionary Rationale:** While tooling or environment configurations may inject `AGENT.md` into context automatically, this active read requirement prevents subtle context gaps, stale assumptions, and misalignment with current pre-commit verification pipelines or architectural constraints.
 
+### Principle VI: Prohibition of Performance & Execution Time Assertions in Functional Tests
+* **Rule:** Specifications, test plans, and automated unit/integration test suites must **NEVER** assert or enforce maximum execution time thresholds, latency SLAs, or duration expectations.
+* **Technical Rationale:** The system depends on third-party networks, DNS providers, and external web hosts whose latencies and response speeds are inherently unpredictable. Imposing duration bounds produces flaky test suites.
+* **Exclusive Performance Tooling:** The **ONLY** tests authorized to measure performance or latency are **k6 load/performance tests**, which operate strictly based on configuration scripts provided, managed, and executed by the user.
+
 ---
 
 ## 4. Non-Negotiable Core Domain Invariants
@@ -142,6 +147,7 @@ Regardless of feature scope, all feature specifications and plans MUST uphold th
 * **Zero-Trust Gatekeeper Inspection:** Every scraped string, URL, and attachment MUST traverse the `src/modules/security/` gateway (RFC 3986 URL parsing, SSRF private IP blocking, ReDoS selector checks, and binary magic-byte inspection) before network processing. In accordance with [`ARCHITECTURAL_RULES_AND_BOUNDARIES.md`](file:///home/abood/Project/Afaq/Afaq-AI-Service/ARCHITECTURAL_RULES_AND_BOUNDARIES.md), the security module operates strictly as a pure, non-mutating gatekeeper, while rich HTML sanitization (`nh3`), entity decoding, and Unicode NFKC normalization are strictly deferred to downstream cleaning pipelines.
 * **Single-Browser Low-Memory Bound:** Crawling operations MUST operate within a single-process concurrency ceiling (`max_concurrent_crawls = 1`) and adhere to the $\le 1$GB container RAM limit.
 * **Raw vs. Cleaning Separation:** Raw extraction tables store unmutated publisher text. Canonical taxonomy normalization and translation are strictly reserved for downstream pipeline modules.
+* **Zero Test Execution Time Assertions:** Functional, unit, and security test plans must not assert test completion time limits. Performance evaluations are restricted exclusively to user-configured k6 suites.
 
 ---
 
@@ -154,4 +160,4 @@ Regardless of feature scope, all feature specifications and plans MUST uphold th
   * **PATCH (1.0.X):** Wording clarifications, template formatting, and non-semantic corrections.
 * **Review Cycle:** The constitution must be verified against delivered features at the completion of each major track.
 
-**Version**: 2.2.0 | **Ratified**: 2026-11-01 | **Last Amended**: 2026-11-02
+**Version**: 2.3.0 | **Ratified**: 2026-11-01 | **Last Amended**: 2026-11-02

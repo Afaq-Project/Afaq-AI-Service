@@ -8,7 +8,7 @@
 
 ## 1. Traceability Matrix: 1-to-1 Use Case to Test Case Mapping
 
-Per Constitution v2.1.0 Principle II & III, every single scenario in [`use_cases.md`](use_cases.md) maps 1-to-1 to a deterministic test case. All tests must be authored **before** implementation code (Red phase):
+Per Constitution v2.3.0 Principle II & III, every single scenario in [`use_cases.md`](use_cases.md) maps 1-to-1 to a deterministic test case. All tests must be authored **before** implementation code (Red phase):
 
 | Use Case ID | Scenario Name | Test Target File | Test Function Name | Verification Gate |
 | :--- | :--- | :--- | :--- | :--- |
@@ -32,27 +32,88 @@ Per Constitution v2.1.0 Principle II & III, every single scenario in [`use_cases
 
 ---
 
-## 2. Test Execution Tiers & Performance Budgets
+## 2. Test Execution Policy & Performance Independence
 
-* **Execution Speed:** Entire security test suite must execute in under **4 seconds** locally.
-* **Determinism:**
-  * Network DNS calls must be mockable via `unittest.mock.patch("asyncio.get_event_loop")` or injected resolver fakes.
+* **Strict Prohibition on Execution Time Limits:**
+  * In accordance with `AGENT.md` Section 1 and Constitution v2.3.0 Principle VI, functional and unit tests **MUST NOT** assert, expect, or enforce execution duration limits or latency bounds.
+  * System operations and network interactions possess inherently unpredictable durations; tests must verify purely logical outcomes, safety verdicts, and error conditions.
+  * **Performance Testing Boundary:** Latency and throughput benchmarks are restricted exclusively to **k6 load test suites** configured and driven by the user.
+* **Determinism & Mocking:**
+  * Network DNS calls must be mockable via `unittest.mock.patch` or injected resolver fakes during unit testing.
   * HTTP client redirect responses must use `httpx.MockTransport`.
-  * Zero live network calls during automated test runs.
+  * Zero live external network dependencies during automated unit tests.
 * **Coverage Target:** Minimum **95% branch coverage** on `src/modules/security/`.
 
 ---
 
-## 3. Architectural & Contract Verification Gates
+## 3. Mandatory Security, Quality & Architecture Gate Suites
 
-In addition to functional unit tests, the security module must pass all global architectural gates before merging:
+In accordance with [`AGENT.md`](../../AGENT.md) Section 5 and Constitution v2.3.0, the module must pass all quality, security, and architectural verification suites prior to code completion:
 
-1. **ArchUnit Layer Separation:**
-   * `uv run pytest tests/architecture/ -v`
-   * Ensures `src/modules/security/` does not depend on database repositories or presentation controllers.
-2. **KG-ARCHMAP Graph Integrity:**
-   * `archmap analyze src --fail-on-cycles --fail-on-layer-violations`
-   * Verifies 0 cyclic imports and Grade A coupling health.
-3. **Enola Drift Check:**
-   * `enola check . --fail-on=layers,cycles`
-   * Asserts no architectural regressions against baseline.
+### 3.1. Code Quality & Formatting
+1. **Ruff Linter:**
+   ```bash
+   uv run ruff check .
+   ```
+   *Threshold:* 0 errors.
+2. **Code Formatter:**
+   ```bash
+   uv run ruff format --check .
+   ```
+   *Threshold:* 0 files to reformat.
+
+### 3.2. Static Security & Quality Analysis (SonarQube)
+* **SonarScanner Execution:**
+  ```bash
+  sonar-scanner \
+    -Dsonar.projectKey=afaq-ai-service \
+    -Dsonar.sources=src \
+    -Dsonar.tests=tests \
+    -Dsonar.python.coverage.reportPaths=coverage.xml \
+    -Dsonar.host.url=http://localhost:9000 \
+    -Dsonar.token=$SONAR_TOKEN
+  ```
+* **Issue Inspection:**
+  ```bash
+  sonar-cli list issues --project afaq-ai-service --severities BLOCKER,CRITICAL,MAJOR
+  ```
+* **Quality Gate Acceptance:** **0 BLOCKER**, **0 CRITICAL**, **0 HIGH** vulnerabilities, bugs, or security hotspots.
+
+### 3.3. Secret & Credential Scanning (Gitleaks)
+* **Execution Command:**
+  ```bash
+  gitleaks detect --source . -v
+  ```
+* **Acceptance Criteria:** **0 leaks found**.
+
+### 3.4. Dependency Vulnerability Audit (Trivy)
+* **Execution Command:**
+  ```bash
+  trivy fs . --scanners vuln --pkg-types library --severity HIGH,CRITICAL --skip-db-update
+  ```
+* **Acceptance Criteria:** **0 CRITICAL** vulnerabilities in active runtime dependencies.
+
+### 3.5. Architectural Fitness & Layer Boundaries (ArchUnit-Python)
+* **Execution Command:**
+  ```bash
+  uv run pytest tests/architecture/ -v
+  ```
+* **Invariants Enforced:**
+  * Security module never depends on `repositories` (`no-security-to-repositories`).
+  * Security module never depends on `api` transport layer (`no-security-to-api`).
+  * Security module never depends on `infrastructure` clients (`no-security-to-infrastructure`).
+  * Zero circular dependencies across `src/`.
+
+### 3.6. Architecture Graph & Coupling Budget (KG-ARCHMAP)
+* **Execution Command:**
+  ```bash
+  archmap analyze src --fail-on-cycles --fail-on-layer-violations
+  ```
+* **Acceptance Criteria:** 0 circular dependencies, 0 layer violations, Health Score $\ge 90$ (Grade A).
+
+### 3.7. Architectural Drift & Intent Gate (Enola)
+* **Execution Command:**
+  ```bash
+  enola check . --fail-on=layers,cycles
+  ```
+* **Acceptance Criteria:** Exit code `0` (Clean structural delta against baseline).
