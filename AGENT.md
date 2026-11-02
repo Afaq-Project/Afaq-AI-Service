@@ -58,7 +58,7 @@ This document establishes the architectural principles, coding conventions, test
 The codebase follows Clean Architecture and Modular Monolith principles. Maintain strict layer separation at all times.
 
 > [!IMPORTANT]
-> The authoritative, living specification of all module boundaries, permitted responsibilities, prohibited actions, and automated tool enforcement mechanisms is codified in [`docs/architecture/ARCHITECTURAL_RULES_AND_BOUNDARIES.md`](file:///home/abood/Project/Afaq/Afaq-AI-Service/docs/architecture/ARCHITECTURAL_RULES_AND_BOUNDARIES.md). All engineers and AI agents must adhere to these definitions.
+> The authoritative, living specification of all module boundaries, permitted responsibilities, prohibited actions, and automated tool enforcement mechanisms is codified in [`ARCHITECTURAL_RULES_AND_BOUNDARIES.md`](file:///home/abood/Project/Afaq/Afaq-AI-Service/ARCHITECTURAL_RULES_AND_BOUNDARIES.md). All engineers and AI agents must adhere to these definitions.
 
 * **API Layer (`src/api/routes/`):**
   * Controllers must remain thin. They handle authentication, request validation, HTTP status codes, and route dispatching.
