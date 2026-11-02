@@ -6,6 +6,12 @@ components:
   - name: modules
     match:
       - "src/modules/**"
+  - name: security
+    match:
+      - "src/modules/security/**"
+  - name: repositories
+    match:
+      - "src/modules/core/database/repositories/**"
 
 rules:
   - id: "no-modules-to-api"
@@ -14,4 +20,16 @@ rules:
     via: "imports"
     mode: "strict"
     because: "Domain modules must never depend on the API transport layer"
+  - id: "no-security-to-repositories"
+    forbid: "security"
+    to: "repositories"
+    via: "imports"
+    mode: "strict"
+    because: "Security gatekeeper must never interact with the database persistence layer"
+  - id: "no-security-to-api"
+    forbid: "security"
+    to: "api"
+    via: "imports"
+    mode: "strict"
+    because: "Security module must remain transport-agnostic and never import API schemas or routers"
 

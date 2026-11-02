@@ -21,6 +21,8 @@ max_incoming_per_file = 25
 forbid = [
     "api -> repositories",
     "repositories -> api",
+    "security -> repositories",
+    "security -> api",
 ]
 
 [risks.layer_order]
