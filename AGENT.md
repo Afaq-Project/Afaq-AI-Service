@@ -70,9 +70,19 @@ The codebase follows Clean Architecture and Modular Monolith principles. Maintai
   * No direct database queries or heavy business logic inside route functions.
   * Route functions must delegate to service protocols via FastAPI dependency injection.
 
-* **Service Layer (`src/modules/*/services/`):**
-  * Houses all core domain logic, calculation rules, workflows, and orchestration.
-  * Services should remain independent of transport protocols (HTTP, CLI, WebSockets).
+* **Service Layer & NestJS-Style File Conventions (`src/modules/*/services/`):**
+  * All domain logic, validation engines, calculation rules, workflows, and service orchestration must reside in a dedicated `services/` subfolder (e.g., `src/modules/<module>/services/`).
+  * **Mandatory File Suffix:** Every service implementation file must be explicitly named with the `*_service.py` suffix (e.g., `link_validator_service.py`, `file_validator_service.py`, `schema_validator_service.py`).
+  * **Module Root Reservation:** The root directory of each domain module (`src/modules/<module>/`) is strictly reserved for:
+    - `__init__.py`: Public exports of services, models, and exceptions.
+    - `models.py`: Pydantic domain models, schemas, and value objects.
+    - `exceptions.py`: Typed domain exceptions and error code definitions.
+  * Services must remain strictly independent of transport protocols (HTTP, CLI, WebSockets).
+
+* **Explicit Test Categorization (Unit vs. Integration):**
+  * Tests must be explicitly organized into `tests/unit/` and `tests/integration/` mirroring the application structure.
+  * **Unit Tests (`tests/unit/`):** Test individual services, validators, and models in isolation with in-memory inputs and mocks (no live network, no live database).
+  * **Integration Tests (`tests/integration/`):** Test cross-component interactions (e.g. multi-hop redirect traversal using `httpx.MockTransport` or local test database queries).
 
 * **Data Access Layer (`src/modules/*/repositories/`):**
   * All database persistence, queries, updates, and transactions must be encapsulated within repository classes.

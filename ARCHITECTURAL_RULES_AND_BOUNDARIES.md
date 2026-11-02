@@ -52,22 +52,28 @@ External Untrusted Web / API
 
 ### 3.1. Security & Inspection Module (`src/modules/security/`)
 * **Role / Identity:** **Pure, Non-Mutating Gatekeeper & Auditor**.
+* **Internal Layout:** All business logic resides in `services/*_service.py`:
+  - `src/modules/security/services/link_validator_service.py`
+  - `src/modules/security/services/file_validator_service.py`
+  - `src/modules/security/services/schema_validator_service.py`
+  - `src/modules/security/models.py`
+  - `src/modules/security/exceptions.py`
 * **Core Philosophy:** *Fail-Closed*. The module asks: *"Does this target or artifact violate security invariants?"* If safe, it allows the exact input through unaltered. If unsafe, it rejects immediately with a standardized, typed security error code.
 * **Permitted Responsibilities:**
-  1. **URL & Network Security (`LinkValidator`):**
+  1. **URL & Network Security (`LinkValidatorService`):**
      * RFC 3986 syntax normalization, port restrictions (`80`, `443`), scheme restrictions (`http`, `https`).
      * Asynchronous pre-request DNS resolution + private, loopback, link-local, and cloud metadata IP blocking (e.g., AWS IMDS `169.254.169.254`).
      * Generation of Chromium `--host-resolver-rules` for deterministic DNS pinning against DNS rebinding (TOCTOU attacks).
      * 5-hop redirect depth limits, circular redirect cycle detection, and per-hop SSRF re-evaluation.
      * RFC 3986 relative reference resolution when an optional `base_url` is provided.
      * HTTP 429/503 rate-limit `Retry-After` cool-down evaluation.
-  2. **File & Attachment Safety (`FileValidator`):**
+  2. **File & Attachment Safety (`FileValidatorService`):**
      * Strict 25 MB stream ceiling enforcement (`ERR_FILE_SIZE_EXCEEDED`).
      * Pure-Python binary magic-byte inspection (PDF `%PDF-`, DOCX/XLSX `PK\x03\x04`, JPEG, PNG, WEBP).
      * Rejection of executable signatures (PE `MZ`, ELF, shell scripts).
      * Zip-bomb inspection without decompression (100:1 compression ratio cap, 50 MB uncompressed cap).
      * S3 object key derivation from sanitized filenames or `{sha256[:16]}.{ext}` hash fallback.
-  3. **Schema & Selector Safety (`SchemaValidator`):**
+  3. **Schema & Selector Safety (`SchemaValidatorService`):**
      * Pydantic structural validation (`strict=True`, `extra="forbid"`).
      * CSS selector syntax compilation and ReDoS complexity limiting (max length 300, max 1 `:has()` depth, max 5 combinators).
      * 200ms dry-run execution timeout against ReDoS backtracking bombs.
@@ -140,7 +146,8 @@ External Untrusted Web / API
 | **ARCH-005** | `api` routes must NEVER depend directly on database `repositories` | **ArchUnit-Python** & **KG-ARCHMAP** | [`tests/architecture/test_architecture.py`](file:///home/abood/Project/Afaq/Afaq-AI-Service/tests/architecture/test_architecture.py#L12-L23), [`.archmap.toml`](file:///home/abood/Project/Afaq/Afaq-AI-Service/.archmap.toml#L22) |
 | **ARCH-006** | The entire `src/` codebase must be free of circular dependencies | **ArchUnit-Python** | [`tests/architecture/test_architecture.py`](file:///home/abood/Project/Afaq/Afaq-AI-Service/tests/architecture/test_architecture.py#L4-L7) |
 | **ARCH-007** | Security validators must return immutable inspection results and NEVER mutate content | **Pytest Contract Suites** | `tests/unit/security/test_immutability.py` |
-| **ARCH-008** | Functional/unit tests must NEVER assert execution time limits or latency SLAs | **Test Governance & AGENT.md** | Constitution v2.3.0 Principle VI; performance measured exclusively via user-configured `k6` suites |
+| **ARCH-008** | Functional/unit tests must NEVER assert execution time limits or latency SLAs | **Test Governance & AGENT.md** | Constitution v2.4.0 Principle VI; performance measured exclusively via user-configured `k6` suites |
+| **ARCH-009** | All domain services must reside in `services/` and be named `*_service.py` | **Clean Architecture & AGENT.md** | NestJS-style service layer convention; module roots hold only `__init__.py`, `models.py`, `exceptions.py` |
 
 ---
 

@@ -6,11 +6,11 @@
 
 ---
 
-## 1. Internal Module Python Contracts (`src/modules/security/`)
+## 1. Internal Module Python Contracts (`src/modules/security/services/`)
 
-The security module serves as the internal universal gateway. All crawling workers, normalizers, and template synthesizers call these static/class methods:
+The security module serves as the internal universal gateway. All crawling workers, normalizers, and template synthesizers call these service methods from `src/modules/security/services/`:
 
-### 1.1. `LinkValidator.validate_url`
+### 1.1. `LinkValidatorService.validate_url`
 * **Signature:**
   ```python
   @classmethod
@@ -42,7 +42,7 @@ The security module serves as the internal universal gateway. All crawling worke
 
 ---
 
-### 1.2. `FileValidator.validate_stream`
+### 1.2. `FileValidatorService.validate_stream`
 * **Signature:**
   ```python
   @staticmethod
@@ -67,7 +67,7 @@ The security module serves as the internal universal gateway. All crawling worke
 
 ---
 
-### 1.3. `SchemaValidator.validate_template_schema`
+### 1.3. `SchemaValidatorService.validate_template_schema`
 * **Signature:**
   ```python
   @classmethod
@@ -93,7 +93,7 @@ The security module serves as the internal universal gateway. All crawling worke
 > **Separation of Concerns:** 
 > 1. **Content Transformations:** Functions such as `to_clean_text`, entity decoding, Unicode NFKC normalization, and `sanitize_html` are **strictly deferred to the downstream Data Cleaning Pipeline (`src/modules/cleaning/`)**.
 > 2. **Prompt Construction & Delimiter Escaping:** XML boundary wrapping and tag escaping (`</untrusted_web_content>` $\rightarrow$ `&lt;/untrusted_web_content&gt;`) belong strictly to the **Scraping / Prompt Builder module (`src/modules/scraping/`)**.
-> 3. The Security Module provides exclusively non-mutating validation and security screening (`LinkValidator`, `FileValidator`, `SchemaValidator`).
+> 3. The Security Module provides exclusively non-mutating validation and security screening (`LinkValidatorService`, `FileValidatorService`, `SchemaValidatorService`).
 
 ---
 

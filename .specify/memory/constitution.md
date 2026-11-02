@@ -1,10 +1,10 @@
 <!--
 Sync Impact Report:
-- Version change: v2.2.0 -> v2.3.0
-- Bump Rationale: Establish explicit prohibition on performance/execution time assertions in functional/unit/integration test suites and mandate that performance testing is restricted exclusively to user-configured k6 suites.
-- Modified Principles: Added Principle VI and added domain invariant.
+- Version change: v2.3.0 -> v2.4.0
+- Bump Rationale: Establish mandatory NestJS-style service layer structure (services/*_service.py) and explicit test categorization (tests/unit/ vs tests/integration/) across all SpecKit workflows.
+- Modified Principles: Added Principle VII.
 - Added Sections:
-  - Principle VI: Prohibition of Performance & Execution Time Assertions in Functional Tests (Section 3).
+  - Principle VII: Mandatory Service Architecture & Test Separation Pattern (Section 3).
 - Removed Sections: None
 - Follow-up TODOs: None
 -->
@@ -137,6 +137,13 @@ specs/<feature-name>/
 * **Technical Rationale:** The system depends on third-party networks, DNS providers, and external web hosts whose latencies and response speeds are inherently unpredictable. Imposing duration bounds produces flaky test suites.
 * **Exclusive Performance Tooling:** The **ONLY** tests authorized to measure performance or latency are **k6 load/performance tests**, which operate strictly based on configuration scripts provided, managed, and executed by the user.
 
+### Principle VII: Mandatory Service Architecture & Test Separation Pattern
+* **Rule:** All modules planned, specified, or implemented through SpecKit MUST adhere to the NestJS-style service layer pattern:
+  1. **Folder Layout:** All business logic, calculation rules, and validation logic MUST reside in a dedicated `services/` subfolder (`src/modules/<module>/services/`).
+  2. **Naming Suffix:** Every service implementation file MUST be explicitly suffixed with `*_service.py` (e.g., `link_validator_service.py`, `file_validator_service.py`, `schema_validator_service.py`).
+  3. **Module Root Reservation:** The root directory of a module (`src/modules/<module>/`) is strictly reserved for `__init__.py` (public facade exports), `models.py` (Pydantic schemas/value objects), and `exceptions.py` (typed domain errors).
+  4. **Explicit Test Categorization:** Tests MUST be partitioned explicitly into `tests/unit/` (in-memory mock-driven testing of single services/models) and `tests/integration/` (cross-component interactions and multi-hop network flows).
+
 ---
 
 ## 4. Non-Negotiable Core Domain Invariants
@@ -160,4 +167,4 @@ Regardless of feature scope, all feature specifications and plans MUST uphold th
   * **PATCH (1.0.X):** Wording clarifications, template formatting, and non-semantic corrections.
 * **Review Cycle:** The constitution must be verified against delivered features at the completion of each major track.
 
-**Version**: 2.3.0 | **Ratified**: 2026-11-01 | **Last Amended**: 2026-11-02
+**Version**: 2.4.0 | **Ratified**: 2026-11-01 | **Last Amended**: 2026-11-02

@@ -71,23 +71,29 @@ specs/001-security-validation-module/
 src/
 └── modules/
     └── security/
-        ├── __init__.py           # Public exports (validators, models, exceptions)
-        ├── models.py             # Pydantic schemas (ValidatedUrl, FileValidationResult, etc.)
-        ├── exceptions.py         # SecurityValidationError exception hierarchy
-        ├── link_validator.py     # RFC 3986, Anti-SSRF, DNS Pinning, Safe Redirects
-        ├── file_validator.py     # Stream limits, magic bytes, zip bomb, S3 key derivation
-        └── schema_validator.py   # AI template schema validation, ReDoS linter & delimiter escaping
+        ├── __init__.py                     # Public exports (services, models, exceptions)
+        ├── models.py                       # Pydantic schemas (ValidatedUrl, FileValidationResult, etc.)
+        ├── exceptions.py                   # SecurityValidationError exception hierarchy
+        └── services/
+            ├── __init__.py                 # Services export
+            ├── link_validator_service.py   # RFC 3986, Anti-SSRF, DNS Pinning, Safe Redirects
+            ├── file_validator_service.py   # Stream limits, magic bytes, zip bomb, S3 key derivation
+            └── schema_validator_service.py # AI template schema validation, ReDoS linter
 
 src/api/routes/v1/
-└── security.py                   # Optional diagnostic inspect-url route (thin controller)
+└── security.py                             # Optional diagnostic inspect-url route (thin controller)
 
-tests/modules/security/
+tests/unit/modules/security/
 ├── __init__.py
-├── test_models.py                # Schema validation & immutability tests
-├── test_link_validator.py        # RFC 3986, Anti-SSRF, DNS rebinding, redirect traps
-├── test_file_validator.py        # Magic bytes, PE/ELF drop, zip-bomb ratio checks
-├── test_schema_validator.py      # Pydantic shape, soupsieve ReDoS, delimiter escaping
-└── test_security_threats.py      # STRIDE negative test cases & failure injection
+├── test_models.py                          # Schema validation & immutability tests
+├── test_link_validator_service.py          # RFC 3986, Anti-SSRF, DNS rebinding, homograph
+├── test_file_validator_service.py          # Magic bytes, PE/ELF drop, zip-bomb ratio checks
+├── test_schema_validator_service.py        # Pydantic shape, soupsieve ReDoS timeout checks
+└── test_security_threats.py                # STRIDE negative test cases & failure injection
+
+tests/integration/modules/security/
+├── __init__.py
+└── test_redirect_traversal.py              # Multi-hop redirect traversal with MockTransport
 ```
 
 ---
@@ -95,31 +101,31 @@ tests/modules/security/
 ## 5. Phased Implementation Roadmap
 
 ### Phase 1: Domain Models & Exception Hierarchy
-1. Author `tests/modules/security/test_models.py`.
+1. Author `tests/unit/modules/security/test_models.py`.
 2. Implement `src/modules/security/exceptions.py` with `SecurityValidationError` hierarchy and standardized error codes.
 3. Implement `src/modules/security/models.py` (`ValidatedUrl`, `FileValidationResult`, `TemplateSchemaValidationResult`).
 4. Validate tests pass.
 
-### Phase 2: Link Verification & Anti-SSRF Subsystem
-1. Author `tests/modules/security/test_link_validator.py`.
-2. Implement `src/modules/security/link_validator.py`:
+### Phase 2: Link Verification & Anti-SSRF Service Subsystem
+1. Author `tests/unit/modules/security/test_link_validator_service.py` and `tests/integration/modules/security/test_redirect_traversal.py`.
+2. Implement `src/modules/security/services/link_validator_service.py`:
    * RFC 3986 parsing, port/scheme whitelist, path traversal rejection.
-   * `base_url` relative reference resolution (`FR-014`).
+   * `base_url` relative reference resolution (`FR-013`).
    * Asynchronous DNS resolution + private CIDR matching (`is_private_or_reserved_ip`).
    * Chromium `--host-resolver-rules` DNS pinning rule production.
    * Safe 5-hop redirect traversal with circular loop detection and per-hop SSRF re-checks.
    * HTTP 429/503 `Retry-After` evaluation.
 3. Validate tests pass.
 
-### Phase 3: Schema & ReDoS Safety Subsystem
-1. Author `tests/modules/security/test_schema_validator.py`.
-2. Implement `src/modules/security/schema_validator.py`:
+### Phase 3: Schema & ReDoS Safety Service Subsystem
+1. Author `tests/unit/modules/security/test_schema_validator_service.py`.
+2. Implement `src/modules/security/services/schema_validator_service.py`:
    * `validate_template_schema`: Pydantic shape validation (`strict=True`, `extra="forbid"`), `soupsieve` compilation, complexity linter, and 200ms dry-run timeout.
 3. Validate tests pass.
 
-### Phase 4: File & Attachment Inspection Subsystem
-1. Author `tests/modules/security/test_file_validator.py`.
-2. Implement `src/modules/security/file_validator.py`:
+### Phase 4: File & Attachment Inspection Service Subsystem
+1. Author `tests/unit/modules/security/test_file_validator_service.py`.
+2. Implement `src/modules/security/services/file_validator_service.py`:
    * 25 MB stream limit enforcement.
    * Pure-Python magic-byte slicing (`%PDF-`, `PK\x03\x04`, JPEG, PNG, WEBP).
    * Unconditional rejection of executable headers (`MZ`, `\x7fELF`, `#!`).
@@ -128,7 +134,7 @@ tests/modules/security/
 3. Validate tests pass.
 
 ### Phase 5: Module Public API & Diagnostic Route
-1. Implement `src/modules/security/__init__.py` exporting public classes and exceptions.
+1. Implement `src/modules/security/services/__init__.py` and `src/modules/security/__init__.py` exporting public service classes, models, and exceptions.
 2. Implement thin diagnostic route `src/api/routes/v1/security.py` and register in FastAPI router.
 3. Author route tests in `tests/api/routes/v1/test_security_routes.py`.
 
