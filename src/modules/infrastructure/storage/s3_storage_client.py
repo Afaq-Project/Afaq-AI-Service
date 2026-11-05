@@ -78,21 +78,24 @@ class S3StorageClient:
                 return True
             except ClientError as e:
                 error_code = e.response.get("Error", {}).get("Code", "Unknown")
-                logger.error(
+                # [OMA-W001-FIX-CYCLE-1] Log exception context with logger.exception
+                logger.exception(
                     f"S3 connection check failed with ClientError: {error_code} - {e}"
                 )
                 raise StorageConnectionError(
                     f"S3 bucket '{self._bucket_name}' access failed: {error_code}", e
                 ) from e
             except EndpointConnectionError as e:
-                logger.error(
+                # [OMA-W001-FIX-CYCLE-1] Log exception context with logger.exception
+                logger.exception(
                     f"Unable to connect to S3 endpoint '{self._endpoint_url}': {e}"
                 )
                 raise StorageConnectionError(
                     f"S3 endpoint connection failed: {self._endpoint_url}", e
                 ) from e
             except Exception as e:
-                logger.error(f"Unexpected error during S3 connection check: {e}")
+                # [OMA-W001-FIX-CYCLE-1] Log exception context with logger.exception
+                logger.exception(f"Unexpected error during S3 connection check: {e}")
                 raise StorageConnectionError(
                     f"Unexpected S3 connection failure: {e}", e
                 ) from e
@@ -140,12 +143,16 @@ class S3StorageClient:
                 )
                 return object_key
             except ClientError as e:
-                logger.error(f"Failed to upload object '{object_key}' to S3: {e}")
+                # [OMA-W001-FIX-CYCLE-1] Log exception context with logger.exception
+                logger.exception(f"Failed to upload object '{object_key}' to S3: {e}")
                 raise StorageUploadError(
                     f"Failed to upload '{object_key}' to S3", e
                 ) from e
             except Exception as e:
-                logger.error(f"Unexpected error uploading '{object_key}' to S3: {e}")
+                # [OMA-W001-FIX-CYCLE-1] Log exception context with logger.exception
+                logger.exception(
+                    f"Unexpected error uploading '{object_key}' to S3: {e}"
+                )
                 raise StorageUploadError(
                     f"Unexpected upload failure for '{object_key}': {e}", e
                 ) from e
@@ -171,12 +178,16 @@ class S3StorageClient:
                     raise StorageFileNotFoundError(
                         f"Object '{object_key}' not found in S3 bucket.", e
                     ) from e
-                logger.error(f"Failed to download object '{object_key}' from S3: {e}")
+                # [OMA-W001-FIX-CYCLE-1] Log exception context with logger.exception
+                logger.exception(
+                    f"Failed to download object '{object_key}' from S3: {e}"
+                )
                 raise StorageDownloadError(
                     f"Failed to download '{object_key}' from S3", e
                 ) from e
             except Exception as e:
-                logger.error(
+                # [OMA-W001-FIX-CYCLE-1] Log exception context with logger.exception
+                logger.exception(
                     f"Unexpected error downloading '{object_key}' from S3: {e}"
                 )
                 raise StorageDownloadError(
@@ -196,7 +207,8 @@ class S3StorageClient:
                 error_code = e.response.get("Error", {}).get("Code", "Unknown")
                 if error_code in ("404", "NoSuchKey"):
                     return False
-                logger.error(f"Error checking object existence '{object_key}': {e}")
+                # [OMA-W001-FIX-CYCLE-1] Log exception context with logger.exception
+                logger.exception(f"Error checking object existence '{object_key}': {e}")
                 return False
             except Exception:
                 return False
@@ -214,7 +226,8 @@ class S3StorageClient:
                 )
                 return True
             except ClientError as e:
-                logger.error(f"Failed to delete object '{object_key}' from S3: {e}")
+                # [OMA-W001-FIX-CYCLE-1] Log exception context with logger.exception
+                logger.exception(f"Failed to delete object '{object_key}' from S3: {e}")
                 return False
 
         return await asyncio.to_thread(_delete)
@@ -233,7 +246,8 @@ class S3StorageClient:
                 )
                 return str(url)
             except ClientError as e:
-                logger.error(
+                # [OMA-W001-FIX-CYCLE-1] Log exception context with logger.exception
+                logger.exception(
                     f"Failed to generate presigned URL for '{object_key}': {e}"
                 )
                 raise StorageError(

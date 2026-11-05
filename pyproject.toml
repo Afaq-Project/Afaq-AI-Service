@@ -24,6 +24,9 @@ dependencies = [
     "langchain-google-genai>=2.0,<4.0",
     "crawl4ai>=0.9.4",
     "boto3>=1.43.123",
+    "cssselect2>=0.10.1",
+    "safe-web-access>=0.1.2",
+    "pypdf>=6.21.4",
 ]
 
 [dependency-groups]

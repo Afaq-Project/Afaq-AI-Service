@@ -56,6 +56,11 @@ This document establishes the architectural principles, coding conventions, test
   * **Rationale:** The system interacts with third-party networks, external DNS, remote web servers, and third-party components whose latencies and response speeds are inherently unpredictable and beyond local control. Enforcing duration limits in automated tests produces brittle, flaky test runs.
   * **Exclusive Tool for Performance Testing:** The **ONLY** tests permitted to measure performance or latency are **k6 load/performance tests**, which operate strictly based on configuration scripts explicitly provided, managed, and executed by the user.
 
+* **Simplicity, Minimal Code & Strict Scope Adherence:**
+  * **Radical Simplicity & Minimal Code:** Code and tests must be kept as simple as possible. Write only the minimum amount of production code and automated tests strictly necessary to achieve the requirements. Avoid over-engineering, premature abstractions, or redundant test bloat.
+  * **Leverage Existing Reliable Libraries:** Whenever reliable, established, and well-tested existing libraries are available, use them instead of implementing complex custom logic, parsers, or security algorithms from scratch. Do not reinvent the wheel when mature ecosystem tooling exists.
+  * **Strict Scope Boundaries (No Over-Analysis):** Over-analyzing the codebase or examining irrelevant sections while working on a task is strictly prohibited. Agents must strictly adhere to the defined scope of the task and focus only on the files, modules, and boundaries directly assigned.
+
 ---
 
 ## 2. Architectural Boundaries & Living Catalog (Modular Monolith)

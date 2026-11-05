@@ -74,3 +74,4 @@ htmlcov/
 
 .agent/
 scripts/scratch/test_scraper.py
+.omg/
