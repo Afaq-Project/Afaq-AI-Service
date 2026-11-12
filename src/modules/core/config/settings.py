@@ -25,9 +25,13 @@ class Settings(BaseSettings):
     # AI & LLM settings (for Stage 0 Discovery & Stage 1 Schema Synthesis)
     google_api_key: str = ""
     anthropic_api_key: str = ""
-    ai_model: str = "gemini-2.0-flash"
+    ai_model: str = "gemini-3.6-flash"
     ai_timeout_seconds: float = 60.0
     ai_max_retries: int = 2
+    ai_chat_max_tokens: int = 4096
+    ai_review_max_tokens: int = 8192
+    ai_history_limit: int = 20
+    ai_refusal_fallbacks: bool = True
 
     # Crawling & Browser settings (Ultra-low memory container constraints)
     crawler_max_concurrent_crawls: int = 1

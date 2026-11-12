@@ -107,7 +107,7 @@ jobs:
         continue-on-error: true
 
       - name: Run Tests
-        run: uv run pytest tests/ --cov=src || echo "No tests found or tests failed, but keeping structure"
+        run: uv run pytest tests/ --cov=src
 
   # =========================================================================
   # 3. BUILD & TEST CONTAINER

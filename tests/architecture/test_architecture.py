@@ -7,12 +7,13 @@ def test_no_circular_dependencies():
     testing.assert_passes(rule)
 
 
+# [OMA-W005-T041] [OMA-W005-T042] [OMA-W005-T043] [OMA-W005-T044] [OMA-W005-T045] [OMA-W006-T012] [OMA-W007-T009] [OMA-W007-T010] Architecture, quality gates, and boundary verification tests
 def test_layer_boundaries_api_does_not_depend_on_repositories():
     """Ensure API layer never bypasses service layer to call repositories directly."""
     rule = (
         layers("src")
         .layer("api")
-        .defined_by_folder("api*")
+        .defined_by_folder("src/api*")
         .layer("repositories")
         .defined_by_folder("modules/*/repositories*")
         .where_layer("api")
@@ -26,7 +27,7 @@ def test_layer_boundaries_repositories_do_not_depend_on_api():
     rule = (
         layers("src")
         .layer("api")
-        .defined_by_folder("api*")
+        .defined_by_folder("src/api*")
         .layer("repositories")
         .defined_by_folder("modules/*/repositories*")
         .where_layer("repositories")
@@ -44,7 +45,7 @@ def test_security_module_does_not_depend_on_repositories_or_api():
         .layer("repositories")
         .defined_by_folder("modules/*/repositories*")
         .layer("api")
-        .defined_by_folder("api*")
+        .defined_by_folder("src/api*")
         .where_layer("security")
         .may_not_depend_on_layers("repositories", "api")
     )

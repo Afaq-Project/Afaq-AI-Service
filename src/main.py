@@ -6,7 +6,8 @@ from fastapi import FastAPI
 from src.api.errors import register_global_error_handlers
 
 # [OMA-W001-T005] Route registration
-from src.api.routes.v1 import health, security, webhook
+# [OMA-W006-T001] Include scrape router
+from src.api.routes.v1 import health, scrape, security, webhook
 from src.modules.core.config.settings import get_settings
 from src.modules.core.database.prisma_client import connect, disconnect
 from src.modules.infrastructure.llm.providers import close_llm_clients
@@ -39,3 +40,5 @@ app.include_router(health.router)
 app.include_router(webhook.router)
 # [OMA-W001-T005] Include security diagnostic router
 app.include_router(security.router)
+# [OMA-W006-T001] Canonical entrypoint mount for scrape router
+app.include_router(scrape.router)

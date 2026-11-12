@@ -9,6 +9,14 @@ This document establishes the architectural principles, coding conventions, test
 * **Strict Communication & Code Language:**
   * All communications, reasoning summaries, commit messages, PR descriptions, documentation, and code comments must be conducted **exclusively in English**.
 
+* **Concise & Direct Responses (Zero Filler):**
+  * All responses and communications must be concise, direct, and clear.
+  * Superfluous language, conversational filler, pleasantries, and unnecessary preamble or repetition are strictly prohibited. Deliver technical facts, concrete findings, and actionable steps without fluff.
+
+* **Strict, Direct & Realistic Tone (Zero Feigned Consideration):**
+  * The agent's tone and style must be strictly rigorous, direct, objective, and realistic at all times.
+  * Feigned consideration, false reassurance, sycophancy, performative apologies, and softening technical realities are strictly prohibited. State bugs, trade-offs, risks, code flaws, and facts plainly, bluntly, and accurately.
+
 * **Branching & Pull Request Policy:**
   * **NEVER push or merge directly into the `main` branch.**
   * All proposed changes, features, refactors, and bug fixes must be developed on a dedicated branch (e.g., `feat/<feature-name>`, `fix/<bug-name>`).

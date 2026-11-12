@@ -504,6 +504,12 @@ class LinkValidatorService:
                 error_code=ERR_HOMOGRAPH_ATTACK,
             )
 
+    # [OMA-W006-T005] Public helper to verify if an IP address is blocked against SSRF
+    @classmethod
+    def is_ip_blocked(cls, ip_str: str) -> bool:
+        """Returns True if the IP address belongs to private, loopback, or cloud metadata CIDRs."""
+        return cls._is_blocked_ip(ip_str)
+
     # [OMA-W004-T001] Blocked IP detector using safe-web-access
     @classmethod
     def _is_blocked_ip(cls, ip_str: str) -> bool:
