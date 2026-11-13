@@ -65,8 +65,17 @@ def _operation(status: str = "completed"):
     )
 
 
-def _route_method_path(route):
-    return route.path, route.methods or set()
+def _collect_app_routes(app_or_router):
+    routes = []
+    for route in app_or_router.routes:
+        if type(route).__name__ == "_IncludedRouter":
+            prefix = getattr(route.include_context, "prefix", "")
+            for sub in route.original_router.routes:
+                sub_path = prefix + getattr(sub, "path", "")
+                routes.append((sub_path, getattr(sub, "methods", set()) or set()))
+        elif hasattr(route, "path") and hasattr(route, "methods"):
+            routes.append((route.path, route.methods or set()))
+    return routes
 
 
 def _concrete_path(path: str) -> str:
@@ -89,8 +98,7 @@ def test_pact_contract_covers_every_application_api_route():
     }
 
     app_routes = set()
-    for route in app.routes:
-        path, methods = _route_method_path(route)
+    for path, methods in _collect_app_routes(app):
         # FastAPI's OpenAPI and interactive documentation endpoints are framework
         # utilities, not application API contracts.
         if path in {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}:

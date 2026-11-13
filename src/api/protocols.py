@@ -190,6 +190,14 @@ def get_scraper_service(
         _singleton_scraper_service = ScraperService(
             webhook_client=client,
         )
+    elif not getattr(_singleton_scraper_service._repository._db, "is_connected", lambda: False)():
+        try:
+            from src.modules.core.database.prisma_client import get_client
+            client_db = get_client()
+            if client_db.is_connected():
+                _singleton_scraper_service._repository._db = client_db
+        except Exception:
+            pass
     return _singleton_scraper_service
 
 

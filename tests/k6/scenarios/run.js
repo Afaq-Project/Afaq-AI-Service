@@ -1,8 +1,8 @@
 // Scenario RUN-01 through RUN-05: Scrape Run Triggering & Idempotency
 // Evaluates API-02 (POST /api/v1/scrape/run)
 
-import { check, group } from 'k6';
-import { httpPost, safeJson, uuidv4 } from '../helpers.js';
+import { check, group, sleep } from 'k6';
+import { httpPost, httpGet, safeJson, uuidv4 } from '../helpers.js';
 import { SOURCE_IDS, LOCKED_SOURCE_ID } from '../config.js';
 
 export function runScrapeTriggerScenario() {
@@ -67,6 +67,25 @@ export function runScrapeTriggerScenario() {
         return false;
       },
     });
+
+    // RUN-01 Telemetry Polling: Poll returned operation
+    if (initialOpId) {
+      let pollSucceeded = false;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        sleep(0.5);
+        const resPoll = httpGet(`/api/v1/scrape/operations/${initialOpId}`);
+        if (resPoll.status === 200) {
+          const pollBody = safeJson(resPoll);
+          if (pollBody && pollBody.data && pollBody.data.operation_id === initialOpId) {
+            pollSucceeded = true;
+            break;
+          }
+        }
+      }
+      check(null, {
+        'RUN-01: Operation status polling returns 200 and matches operation_id': () => pollSucceeded,
+      });
+    }
 
     // RUN-03: Repeated request with the SAME idempotency key within 15 mins
     const resDuplicate = httpPost(

@@ -1,5 +1,7 @@
 import asyncio
 import hashlib
+import os
+import sys
 from datetime import datetime, timezone, timedelta
 from prisma import Prisma
 
@@ -7,12 +9,17 @@ def hash_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode()).hexdigest()
 
 async def seed():
+    db_url = os.environ.get("DATABASE_URL", "")
+    if db_url and "test" not in db_url.lower():
+        print(f"ERROR: Refusing to seed non-test database target. DATABASE_URL must contain 'test'.", file=sys.stderr)
+        sys.exit(1)
+
     db = Prisma()
     await db.connect()
     now = datetime.now(timezone.utc)
     
-    # 1. API Key
-    raw_key = "k6-test-key-secret-12345"
+    # 1. API Key (configurable via TEST_API_KEY, secrets never logged)
+    raw_key = os.environ.get("TEST_API_KEY", "k6-test-key-secret-12345")
     key_hash = hash_key(raw_key)
     existing_key = await db.apikey.find_unique(where={"key": key_hash})
     if not existing_key:
@@ -24,9 +31,9 @@ async def seed():
                 "is_active": True,
             }
         )
-        print("Created test API key.")
+        print("Created test API key record successfully (raw key redacted).")
     else:
-        print("Test API key already exists.")
+        print("Test API key record already exists.")
 
     # 2. Test Sources
     # Source 1: Active, unlocked source

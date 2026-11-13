@@ -242,27 +242,36 @@ class GrantsRepositoryMixin:
             merged.update(kwargs)
             input_dto = GrantDetailCreateInput(**merged)
 
-        payload_dict = {
-            "operation_id": input_dto.operation_id,
-            "source_id": input_dto.source_id,
+        payload_dict: dict[str, Any] = {
+            "operation": {"connect": {"id": input_dto.operation_id}},
+            "source": {"connect": {"id": input_dto.source_id}},
             "source_url": input_dto.source_url,
             "raw_payload": to_json(input_dto.raw_payload),
-            "listing_id": input_dto.listing_id,
-            "opportunity_group_id": input_dto.opportunity_group_id,
-            "template_id": input_dto.template_id,
             "template_version": input_dto.template_version,
-            "image_url": input_dto.image_url,
             "title_language": input_dto.title_language,
             "body_language": input_dto.body_language,
             "language_confidence": input_dto.language_confidence,
             "link_verification_status": input_dto.link_verification_status,
-            "final_application_url": input_dto.final_application_url,
-            "is_legitimate_domain": input_dto.is_legitimate_domain,
             "has_attachment": input_dto.has_attachment,
-            "attachment_s3_key": input_dto.attachment_s3_key,
-            "attachment_metadata": to_json(input_dto.attachment_metadata),
             "status": input_dto.status,
         }
+
+        if input_dto.listing_id:
+            payload_dict["listing"] = {"connect": {"id": input_dto.listing_id}}
+        if input_dto.opportunity_group_id:
+            payload_dict["opportunity_group_id"] = input_dto.opportunity_group_id
+        if input_dto.template_id:
+            payload_dict["template"] = {"connect": {"id": input_dto.template_id}}
+        if input_dto.image_url is not None:
+            payload_dict["image_url"] = input_dto.image_url
+        if input_dto.final_application_url is not None:
+            payload_dict["final_application_url"] = input_dto.final_application_url
+        if input_dto.is_legitimate_domain is not None:
+            payload_dict["is_legitimate_domain"] = input_dto.is_legitimate_domain
+        if input_dto.attachment_s3_key is not None:
+            payload_dict["attachment_s3_key"] = input_dto.attachment_s3_key
+        if input_dto.attachment_metadata is not None:
+            payload_dict["attachment_metadata"] = to_json(input_dto.attachment_metadata)
 
         return await self._db.rawgrantdetail.create(
             data=payload_dict  # type: ignore[arg-type]

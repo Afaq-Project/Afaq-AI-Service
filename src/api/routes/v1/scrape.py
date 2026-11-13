@@ -328,7 +328,7 @@ async def get_operation_by_id(
     return ScrapeOperationEnvelope(
         status="success",
         data=op_response,
-        message="Operation details retrieved successfully.",
+        message="Operation status retrieved successfully.",
     )
 
 

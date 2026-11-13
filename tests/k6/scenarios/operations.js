@@ -35,7 +35,19 @@ export function runOperationsScenario() {
           const page2Ids = body.data.operations.map((o) => o.operation_id);
           return !page2Ids.some((id) => page1Ids.includes(id));
         }
-        return true;
+        return false;
+      },
+      'OPS-01: Operations are ordered descending by started_at': (r) => {
+        const body = safeJson(r);
+        if (body && body.data && Array.isArray(body.data.operations) && body.data.operations.length > 1) {
+          const ops = body.data.operations;
+          for (let i = 0; i < ops.length - 1; i++) {
+            if (new Date(ops[i].started_at).getTime() < new Date(ops[i + 1].started_at).getTime()) {
+              return false;
+            }
+          }
+        }
+        return Boolean(body && body.data && Array.isArray(body.data.operations));
       },
     });
 
