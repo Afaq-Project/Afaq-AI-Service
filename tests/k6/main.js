@@ -2,7 +2,7 @@
 // Implements load_test_configuration.md and k6_test_definition.md
 
 import { sleep } from 'k6';
-import { PROFILE, PROFILES, REQUEST_TIMEOUT } from './config.js';
+import { PROFILE, PROFILES } from './config.js';
 import { runAuthScenario } from './scenarios/auth.js';
 import { runOnboardScenario } from './scenarios/onboard.js';
 import { runScrapeTriggerScenario } from './scenarios/run.js';
@@ -11,14 +11,19 @@ import { runAbortScenario } from './scenarios/abort.js';
 import { runDeadLetterScenario } from './scenarios/dead_letter.js';
 import { runBurstScenario } from './scenarios/burst.js';
 
-const selectedProfile = PROFILES[PROFILE] || PROFILES.baseline;
+const selectedProfile = PROFILES[PROFILE];
+if (!selectedProfile) {
+  throw new Error(`Unknown K6_PROFILE '${PROFILE}'. Choose baseline or unexpected_burst.`);
+}
 
 export const options = {
   stages: selectedProfile.stages,
   thresholds: {
     // Numeric percentiles and error SLOs remain unset as marked TBD in load_test_configuration.md
-    // Service-level assertion: No unhandled 5xx errors across authorized endpoints
-    'http_req_failed{status:500}': ['rate==0'],
+    // Functional checks must all pass. Expected 4xx rejection cases are checks,
+    // not server failures, so track 5xx responses in their own custom metric.
+    checks: ['rate==1'],
+    http_5xx_rate: ['rate==0'],
   },
   tags: {
     environment: __ENV.K6_ENVIRONMENT || 'test',

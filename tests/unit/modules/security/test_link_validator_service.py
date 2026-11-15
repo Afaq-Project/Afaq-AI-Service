@@ -622,8 +622,9 @@ def test_is_blocked_ip_edge_cases():
     # Public IPv6 address is allowed
     assert LinkValidatorService._is_blocked_ip("2606:4700:4700::1111") is False
 
-    # IPv4-mapped IPv6 is blocked under ::ffff:0:0/96 CIDR
-    assert LinkValidatorService._is_blocked_ip("::ffff:93.184.216.34") is True
+    # IPv4-mapped IPv6 addresses inherit the policy of their embedded IPv4.
+    assert LinkValidatorService._is_blocked_ip("::ffff:93.184.216.34") is False
+    assert LinkValidatorService._is_blocked_ip("::ffff:10.0.0.1") is True
 
     # AWS IMDS explicit string
     assert LinkValidatorService._is_blocked_ip("169.254.169.254") is True

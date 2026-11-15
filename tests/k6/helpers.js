@@ -2,7 +2,11 @@
 
 import http from 'k6/http';
 import { check } from 'k6';
+import { Rate } from 'k6/metrics';
 import { BASE_URL, API_KEY, REQUEST_TIMEOUT } from './config.js';
+
+// Track server failures independently of expected 4xx validation/auth results.
+export const http5xxRate = new Rate('http_5xx_rate');
 
 // Simple RFC 4122 v4 UUID generator for test keys
 export function uuidv4() {
@@ -33,7 +37,9 @@ export function httpGet(path, customKey = API_KEY, extraParams = {}) {
     timeout: REQUEST_TIMEOUT,
     tags: extraParams.tags || {},
   };
-  return http.get(url, params);
+  const response = http.get(url, params);
+  http5xxRate.add(response.status >= 500);
+  return response;
 }
 
 // Wrapper for HTTP POST with standard timeout and headers
@@ -45,7 +51,28 @@ export function httpPost(path, body = {}, customKey = API_KEY, extraParams = {})
     tags: extraParams.tags || {},
   };
   const bodyString = typeof body === 'string' ? body : JSON.stringify(body);
-  return http.post(url, bodyString, params);
+  const response = http.post(url, bodyString, params);
+  http5xxRate.add(response.status >= 500);
+  return response;
+}
+
+// Submit a deliberately concurrent batch while preserving per-request headers.
+export function httpBatchPost(path, payloads, customKey = API_KEY) {
+  const url = `${BASE_URL}${path}`;
+  const requests = payloads.map(({ body, headers = {}, tags = {} }) => ({
+    method: 'POST',
+    url,
+    body: JSON.stringify(body),
+    params: {
+      headers: authHeaders(customKey, headers),
+      timeout: REQUEST_TIMEOUT,
+      tags,
+    },
+  }));
+
+  const responses = http.batch(requests);
+  responses.forEach((response) => http5xxRate.add(response.status >= 500));
+  return responses;
 }
 
 // Safe JSON parser

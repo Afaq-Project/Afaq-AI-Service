@@ -6,10 +6,16 @@ This document defines the k6 test coverage and exact scenarios for Spec 2. Use i
 
 - Exercise the deployed API through HTTP and assert externally observable behavior. k6 does not inspect PostgreSQL or internal Python objects; use operation responses, webhook capture, and test-environment data/setup to verify outcomes.
 - Use dedicated, pre-onboarded test sources and test-only target websites/documents. Do not scrape arbitrary public sites as load-test data.
+- `K6_BASE_URL`, `K6_API_KEY`, `K6_SOURCE_IDS`, `K6_LOCKED_SOURCE_ID`, `K6_INACTIVE_SOURCE_ID`, and `K6_KNOWN_OPERATION_ID` are required. The runner must fail closed when they are absent or malformed; do not supply production-like defaults.
+- Valid/irrelevant onboarding scenarios require operator-supplied controlled fixtures via `K6_TEST_VALID_PORTAL_URL` and `K6_TEST_IRRELEVANT_PORTAL_URL`, with `K6_ENABLE_ONBOARDING=true`. Without those fixtures, mark ONB-01/ONB-02 blocked and run only the SSRF/malformed-input cases.
 - Every request to a scraping control endpoint must include `X-API-Key: ${K6_API_KEY}` unless the scenario intentionally tests missing or invalid authentication.
 - Run tests against `K6_BASE_URL` in a non-production environment. Honor the `baseline` and `unexpected_burst` limits in the companion configuration.
 - Each scenario has a unique ID prefix for test data. Reuse an idempotency key only when deliberately repeating the same logical trigger; use new keys for independent operations.
 - Trigger endpoints are asynchronous: assert acknowledgement and operation tracking, then poll status rather than treating the initial response as job completion.
+
+## Postponed scenarios
+
+**ONB-01 and ONB-02 were postponed in the Codespaces run on 2026-11-15.** They were not failures: no controlled onboarding portal fixtures were configured. The k6 implementation logs these scenarios as `BLOCKED` and runs ONB-03's SSRF and malformed-URL checks instead. See the [postponed-scenario record](../../docs/reports/scraping_extraction_pipeline/k6_postponed_scenarios.md) for fixture requirements and how to run them.
 
 ## Endpoint coverage
 
@@ -54,14 +60,14 @@ This document defines the k6 test coverage and exact scenarios for Spec 2. Use i
 
 ### RUN-02 — Trigger without source IDs
 
-1. Submit a valid trigger body omitting `source_ids` with a fresh idempotency key.
+1. In a dedicated test database containing only active test sources, enable `K6_ENABLE_OMITTED_SOURCE_IDS=true` and submit a valid trigger body omitting `source_ids` with a fresh idempotency key. The default suite leaves this opt-in disabled to avoid scheduling unrelated active sources.
 2. Assert `202` and that the returned queued/attempted sources correspond only to active, eligible test-environment sources.
 3. Poll operation status to terminal state. Do not use this scenario in a shared environment containing non-test active sources.
 
 ### RUN-03 — Idempotency under retry and burst
 
 1. Submit one trigger for a test source with idempotency key `K`.
-2. Concurrently submit 5 identical logical trigger requests using the same key `K` within 15 minutes.
+2. Concurrently submit 5 identical logical trigger requests using the same valid UUID key `K` within 15 minutes. Use an HTTP batch to inspect all responses in one k6 VU.
 3. Assert one unique `operation_id` across all successful responses; initial request may be `202`, deduplicated requests must be `200`; verify the operations log has exactly one operation associated with this key if the API exposes enough data, otherwise verify no more than one execution starts via operation telemetry/webhook capture.
 
 ### RUN-04/05/06 — Trigger validation, locks, and concurrent distinct jobs
@@ -148,7 +154,7 @@ This document defines the k6 test coverage and exact scenarios for Spec 2. Use i
 
 Use the companion configuration's two profiles as follows:
 
-- **`baseline` (1 VU):** Run API query checks and one controlled end-to-end `RUN-01`; run onboarding and other mutating pipeline scenarios sequentially with isolated fixtures.
+- **`baseline` (1 VU):** Run API query checks throughout the profile; execute trigger and onboarding mutations at most once per test run. Run onboarding only with controlled fixture URLs. RUN-02 requires its explicit opt-in and an isolated database.
 - **`unexpected_burst` (up to 5 VUs):** Focus on `RUN-03`, `RUN-04/05/06`, concurrent operation polling (`OPS`), and idempotent retry behavior. Do not create 5 simultaneous browser crawls; the service's browser concurrency remains 1.
 - **Dedicated long-duration checks:** `PIPE-07` timeout and webhook backoff checks are separate runs because they exceed the short profile durations.
 - Do not run destructive abort, DLQ retry, or fixture mutation scenarios concurrently against the same source/operation.

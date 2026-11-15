@@ -1,37 +1,115 @@
 import asyncio
 import hashlib
 import os
+import re
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
+from urllib.parse import unquote, urlsplit
+
 from prisma import Prisma
+
+API_KEY_ID = "00000000-0000-4000-8000-000000000001"
+
+
+class SeedConfigurationError(ValueError):
+    """Raised when the seeder cannot prove it targets a test database."""
+
 
 def hash_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode()).hexdigest()
 
+
+def _test_database_target(
+    database_url: str, variable_name: str
+) -> tuple[str, int, str]:
+    """Return a local test database target; reject remote and ambiguous URLs."""
+    try:
+        parsed = urlsplit(database_url)
+        database_name = unquote(parsed.path.removeprefix("/"))
+        host = parsed.hostname
+        port = parsed.port or 5432
+    except ValueError as exc:
+        raise SeedConfigurationError(
+            f"{variable_name} is not a valid PostgreSQL connection URL."
+        ) from exc
+
+    if parsed.scheme not in {"postgres", "postgresql"} or not host:
+        raise SeedConfigurationError(
+            f"{variable_name} must be a PostgreSQL URL with an explicit host."
+        )
+    if host.lower() not in {"localhost", "127.0.0.1", "::1"}:
+        raise SeedConfigurationError(
+            f"{variable_name} must target PostgreSQL on this machine."
+        )
+    if not database_name or "/" in database_name:
+        raise SeedConfigurationError(
+            f"{variable_name} must identify exactly one database."
+        )
+    if not re.fullmatch(r"[A-Za-z0-9_-]+_test", database_name, re.IGNORECASE):
+        raise SeedConfigurationError(
+            f"{variable_name} database name must end with '_test'."
+        )
+    return "loopback", port, database_name
+
+
+def _load_test_api_key() -> str:
+    """Require a caller-supplied test key; never fall back to a committed key."""
+    raw_key = os.environ.get("TEST_API_KEY", "")
+    if len(raw_key) < 16:
+        raise SeedConfigurationError(
+            "TEST_API_KEY must be provided and contain at least 16 characters."
+        )
+    return raw_key
+
+
+def _validate_seed_environment() -> str:
+    """Fail closed unless the explicit database and key are test-only values."""
+    database_url = os.environ.get("DATABASE_URL", "")
+    if not database_url:
+        raise SeedConfigurationError(
+            "DATABASE_URL must be explicitly set; refusing implicit .env configuration."
+        )
+
+    database_target = _test_database_target(database_url, "DATABASE_URL")
+    direct_url = os.environ.get("DIRECT_URL")
+    if direct_url:
+        direct_database_target = _test_database_target(direct_url, "DIRECT_URL")
+        if direct_database_target != database_target:
+            raise SeedConfigurationError(
+                "DIRECT_URL and DATABASE_URL must target the same local test database."
+            )
+
+    return _load_test_api_key()
+
+
 async def seed():
-    db_url = os.environ.get("DATABASE_URL", "")
-    if db_url and "test" not in db_url.lower():
-        print(f"ERROR: Refusing to seed non-test database target. DATABASE_URL must contain 'test'.", file=sys.stderr)
-        sys.exit(1)
+    raw_key = _validate_seed_environment()
 
     db = Prisma()
     await db.connect()
-    now = datetime.now(timezone.utc)
-    
-    # 1. API Key (configurable via TEST_API_KEY, secrets never logged)
-    raw_key = os.environ.get("TEST_API_KEY", "k6-test-key-secret-12345")
+    now = datetime.now(UTC)
+
+    # 1. API Key (the raw key is provided through TEST_API_KEY and never logged)
     key_hash = hash_key(raw_key)
     existing_key = await db.apikey.find_unique(where={"key": key_hash})
     if not existing_key:
-        await db.apikey.create(
-            data={
-                "id": "00000000-0000-4000-8000-000000000001",
-                "key": key_hash,
-                "name": "k6-test-runner",
-                "is_active": True,
-            }
-        )
-        print("Created test API key record successfully (raw key redacted).")
+        key_with_reserved_id = await db.apikey.find_unique(where={"id": API_KEY_ID})
+        if key_with_reserved_id:
+            await db.apikey.update(
+                where={"id": API_KEY_ID},
+                data={"key": key_hash, "is_active": True},
+            )
+            print("Updated the test API key record (raw key redacted).")
+        else:
+            await db.apikey.create(
+                data={
+                    "id": API_KEY_ID,
+                    "key": key_hash,
+                    "name": "k6-test-runner",
+                    "is_active": True,
+                }
+            )
+            print("Created test API key record (raw key redacted).")
     else:
         print("Test API key record already exists.")
 
@@ -55,7 +133,7 @@ async def seed():
                 "site_name": "Test University Scholarships",
                 "supported_languages": ["en"],
                 "pagination_type": "url_param",
-                "pagination_config": "{\"param\": \"page\", \"step\": 1}",
+                "pagination_config": '{"param": "page", "step": 1}',
                 "ordering_strategy": "chronological_descending",
                 "rate_limit_delay_sec": 1.0,
                 "max_pages_per_run": 5,
@@ -89,15 +167,21 @@ async def seed():
             }
         )
         print("Created Source 2 (locked).")
+    else:
+        await db.source.update(where={"id": s2_id}, data={"is_active": True})
+        await db.sourceconfig.update(
+            where={"source_id": s2_id},
+            data={"is_locked": True, "locked_at": now},
+        )
 
     # Source 3: Inactive / Unlocked source for abort testing
-    s3_id = "44444444-4444-4444-4444-444444444444"
+    s3_id = "44444444-4444-4444-8444-444444444444"
     s3 = await db.source.find_unique(where={"id": s3_id})
     if not s3:
         await db.source.create(
             data={
                 "id": s3_id,
-                "url": "https://inactive-portal.example.edu/awards",
+                "url": "https://inactive-portal.example.edu/awards-k6",
                 "name": "Inactive Portal",
                 "is_active": False,
             }
@@ -114,7 +198,9 @@ async def seed():
         print("Created Source 3 (inactive & unlocked for abort check).")
     else:
         await db.source.update(where={"id": s3_id}, data={"is_active": False})
-        await db.sourceconfig.update(where={"source_id": s3_id}, data={"is_locked": False})
+        await db.sourceconfig.update(
+            where={"source_id": s3_id}, data={"is_locked": False}
+        )
 
     # 3. Operations for OPS-01 through OPS-08
     op1_id = "11111111-1111-4111-8111-111111111111"
@@ -154,7 +240,7 @@ async def seed():
                 "total_listings_found": 0,
                 "total_details_extracted": 0,
                 "total_files_downloaded": 0,
-                "error_summary": "{\"error\": \"DNS resolution failed\"}",
+                "error_summary": '{"error": "DNS resolution failed"}',
                 "started_at": now - timedelta(hours=2),
                 "completed_at": now - timedelta(hours=2) + timedelta(minutes=1),
             }
@@ -199,7 +285,7 @@ async def seed():
                 "status": "failed_permanently",
                 "retry_count": 3,
                 "max_retries": 3,
-                "extraction_errors": "{\"stage\": \"catalog\", \"reason\": \"Parsing exception\"}",
+                "extraction_errors": '{"stage": "catalog", "reason": "Parsing exception"}',
             }
         )
         print("Created DLQ listing.")
@@ -218,7 +304,7 @@ async def seed():
                 "status": "failed_permanently",
                 "retry_count": 3,
                 "max_retries": 3,
-                "extraction_errors": "{\"stage\": \"detail\", \"reason\": \"Invalid schema\"}",
+                "extraction_errors": '{"stage": "detail", "reason": "Invalid schema"}',
             }
         )
         print("Created DLQ detail.")
@@ -226,5 +312,10 @@ async def seed():
     await db.disconnect()
     print("Database seeding completed successfully.")
 
+
 if __name__ == "__main__":
-    asyncio.run(seed())
+    try:
+        asyncio.run(seed())
+    except SeedConfigurationError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)

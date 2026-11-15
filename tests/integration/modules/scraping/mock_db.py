@@ -128,7 +128,12 @@ class FakePrismaCollection:
         record_id = data.get("id") or str(uuid.uuid4())
         rec_data: dict[str, Any] = {}
         for k, v in data.items():
-            rec_data[k] = v.data if hasattr(v, "data") else v
+            val = v.data if hasattr(v, "data") else v
+            rec_data[k] = val
+            if isinstance(val, dict) and "connect" in val:
+                conn = val["connect"]
+                if isinstance(conn, dict) and "id" in conn:
+                    rec_data[f"{k}_id"] = conn["id"]
 
         rec_data["id"] = record_id
         now = datetime.now(UTC)

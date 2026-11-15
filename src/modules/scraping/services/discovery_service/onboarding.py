@@ -186,11 +186,22 @@ class DiscoveryService:
         return delay, sitemaps
 
     async def _fetch_homepage_dom(self, canonical_url: str) -> str:
-        crawl_result = await self._crawler.crawl_page(
-            canonical_url,
-            unhide_tabs=False,
-            has_multi_page=False,
-        )
+        try:
+            crawl_result = await self._crawler.crawl_page(
+                canonical_url,
+                unhide_tabs=False,
+                has_multi_page=False,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch homepage DOM for %s: %s", canonical_url, exc
+            )
+            raise NotOpportunityPortalError(
+                message=f"Target website unreachable or failed to load: {exc}",
+                code=ERR_NOT_OPPORTUNITY_PORTAL,
+                details={"url": canonical_url, "error": str(exc)},
+            ) from exc
+
         if (
             crawl_result.status_code >= 400
             or not crawl_result.html

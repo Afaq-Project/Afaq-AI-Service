@@ -1,79 +1,91 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# scripts/deploy_to_codespace.sh
-# Synchronizes local workspace files and tests to GitHub Codespaces and triggers execution.
-# ==============================================================================
+# Sync tracked project files to a Codespace without copying local secrets.
 
 set -euo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPOSITORY="Afaq-Project/Afaq-AI-Service"
+TARGET_DIR="/workspaces/Afaq-AI-Service"
 cd "${REPO_ROOT}"
 
-# Auto-detect or use configured Codespace name
+for tool in gh git tar; do
+    if ! command -v "${tool}" >/dev/null 2>&1; then
+        echo "ERROR: Required command '${tool}' is not installed." >&2
+        exit 1
+    fi
+done
+
 CODESPACE_NAME="${CODESPACE_NAME:-}"
 if [[ -z "${CODESPACE_NAME}" ]]; then
-    CODESPACE_NAME="$(gh codespace list --json name,repository -q '.[] | select(.repository == "Afaq-Project/Afaq-AI-Service") | .name' | head -n 1)"
+    mapfile -t matches < <(
+        gh codespace list --json name,repository \
+            -q ".[] | select(.repository == \"${REPOSITORY}\") | .name"
+    )
+    if [[ "${#matches[@]}" -ne 1 ]]; then
+        echo "ERROR: Expected exactly one Codespace for ${REPOSITORY}; found ${#matches[@]}. Set CODESPACE_NAME explicitly." >&2
+        exit 1
+    fi
+    CODESPACE_NAME="${matches[0]}"
 fi
 
-if [[ -z "${CODESPACE_NAME}" ]]; then
-    echo "ERROR: No active or configured Codespace found for Afaq-Project/Afaq-AI-Service." >&2
+if [[ ! "${CODESPACE_NAME}" =~ ^[A-Za-z0-9-]+$ ]]; then
+    echo "ERROR: CODESPACE_NAME contains unsupported characters." >&2
     exit 1
 fi
 
-echo "=========================================================="
-echo "Codespace Deployment & Synchronization"
-echo "Target Codespace: ${CODESPACE_NAME}"
-echo "Local Directory:  ${REPO_ROOT}"
-echo "=========================================================="
-
-# 1. Ensure Codespace is running and reachable
-echo "[1/4] Ensuring Codespace is running..."
-gh codespace ssh -c "${CODESPACE_NAME}" -- echo "Codespace connection verified."
-
-# 2. Package and synchronize workspace files
-echo "[2/4] Packaging and uploading repository files to Codespace..."
-TEMP_ARCHIVE="/tmp/afaq_codespace_sync.tar.gz"
-tar --exclude='.git' \
-    --exclude='.venv' \
-    --exclude='__pycache__' \
-    --exclude='.pytest_cache' \
-    --exclude='node_modules' \
-    --exclude='coverage' \
-    -czf "${TEMP_ARCHIVE}" .
-
-gh codespace cp -e -c "${CODESPACE_NAME}" "${TEMP_ARCHIVE}" "remote:/tmp/afaq_codespace_sync.tar.gz"
-rm -f "${TEMP_ARCHIVE}"
-
-echo "[3/4] Unpacking in Codespace workspace directory..."
-gh codespace ssh -c "${CODESPACE_NAME}" -- bash -c '
-    set -euo pipefail
-    TARGET_DIR="/workspaces/Afaq-AI-Service"
-    mkdir -p "${TARGET_DIR}"
-    cd "${TARGET_DIR}"
-    tar -xzf /tmp/afaq_codespace_sync.tar.gz
-    rm -f /tmp/afaq_codespace_sync.tar.gz
-    chmod +x scripts/*.sh
-    echo "Files successfully synchronized to ${TARGET_DIR}."
-'
-
-# 4. Optional execution trigger
-EXECUTE_TESTS="${EXECUTE_TESTS:-false}"
-TEST_MODE="${TEST_MODE:-all}"
-
-if [[ "${EXECUTE_TESTS}" == "true" ]]; then
-    echo "[4/4] Executing test suite in Codespace (Mode: ${TEST_MODE})..."
-    gh codespace ssh -c "${CODESPACE_NAME}" -- bash -c "
-        set -euo pipefail
-        cd /workspaces/Afaq-AI-Service
-        bash scripts/codespaces_test_setup.sh
-        bash scripts/codespaces_test.sh ${TEST_MODE}
-    "
-else
-    echo "[4/4] Upload complete. To run setup and tests in Codespace, run:"
-    echo "  gh codespace ssh -c ${CODESPACE_NAME} -- bash -c 'cd /workspaces/Afaq-AI-Service && bash scripts/codespaces_test_setup.sh && bash scripts/codespaces_test.sh ${TEST_MODE}'"
+codespace_repo="$(gh codespace list --json name,repository \
+    -q ".[] | select(.name == \"${CODESPACE_NAME}\") | .repository")"
+if [[ "${codespace_repo}" != "${REPOSITORY}" ]]; then
+    echo "ERROR: The selected Codespace does not belong to ${REPOSITORY}." >&2
+    exit 1
 fi
 
-echo "=========================================================="
-echo "Codespace synchronization complete."
-echo "=========================================================="
+EXECUTE_TESTS="${EXECUTE_TESTS:-false}"
+TEST_MODE="${TEST_MODE:-all}"
+if [[ "${EXECUTE_TESTS}" != "true" && "${EXECUTE_TESTS}" != "false" ]]; then
+    echo "ERROR: EXECUTE_TESTS must be 'true' or 'false'." >&2
+    exit 1
+fi
+case "${TEST_MODE}" in
+    unit|contracts|postgres|browser|boundary|smoke|k6|all) ;;
+    *) echo "ERROR: Unsupported TEST_MODE '${TEST_MODE}'." >&2; exit 1 ;;
+esac
+
+temporary_dir="$(mktemp -d "${TMPDIR:-/tmp}/afaq-codespace-sync.XXXXXX")"
+file_list="${temporary_dir}/tracked-files.list"
+cleanup() { rm -rf -- "${temporary_dir}"; }
+trap cleanup EXIT INT TERM
+
+# Only tracked files are eligible. Explicitly exclude secret/config material
+# even if it was accidentally added to Git in the past.
+while IFS= read -r -d '' path; do
+    case "${path}" in
+        .env|.env.*|*/.env|*/.env.*|.aws/*|*/.aws/*|.ssh/*|*/.ssh/*|\
+        *.pem|*.key|*.p12|*.pfx|*credentials*|*/id_rsa*|*/id_ed25519*)
+            continue
+            ;;
+    esac
+    [[ -f "${path}" ]] && printf '%s\0' "${path}" >>"${file_list}"
+done < <(git ls-files -z --cached)
+
+if [[ ! -s "${file_list}" ]]; then
+    echo "ERROR: No tracked working-tree files were found to sync." >&2
+    exit 1
+fi
+
+echo "Syncing tracked project files to Codespace ${CODESPACE_NAME}."
+gh codespace ssh --codespace "${CODESPACE_NAME}" -- true
+tar --null --files-from="${file_list}" -czf - | \
+    gh codespace ssh --codespace "${CODESPACE_NAME}" -- \
+        "set -euo pipefail; mkdir -p '${TARGET_DIR}'; tar --no-same-owner -xzf - -C '${TARGET_DIR}'; echo 'Tracked project files extracted successfully.'"
+
+if [[ "${EXECUTE_TESTS}" == "true" ]]; then
+    echo "Preparing the Codespace test environment and running mode '${TEST_MODE}'."
+    remote_test_command="set -euo pipefail; cd '${TARGET_DIR}'; bash scripts/codespaces_test_setup.sh; bash scripts/codespaces_test.sh '${TEST_MODE}'"
+    gh codespace ssh --codespace "${CODESPACE_NAME}" -- "${remote_test_command}"
+else
+    echo "Tracked files synced. Local ignored/untracked files and credentials were not transferred."
+    echo "To prepare and run later: gh codespace ssh -c ${CODESPACE_NAME} -- bash -lc 'cd ${TARGET_DIR} && bash scripts/codespaces_test_setup.sh && bash scripts/codespaces_test.sh ${TEST_MODE}'"
+fi

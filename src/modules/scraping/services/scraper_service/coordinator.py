@@ -5,6 +5,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from prisma.errors import UniqueViolationError
+
 from src.modules.core.config.settings import Settings, get_settings
 from src.modules.core.database.repositories.scraping_repository import (
     ScrapingRepository,
@@ -126,11 +128,13 @@ class ScraperCoordinator:
             candidate_sources = await self._repository.get_active_sources()
 
         if not candidate_sources:
-            op = await self._repository.create_operation(
+            op, is_idempotent_hit = await self._create_or_get_idempotent_operation(
                 idempotency_key=idempotency_key,
                 triggered_by=triggered_by,
                 sources_attempted=[],
             )
+            if is_idempotent_hit:
+                return op, True, len(op.sources_attempted or []), 0
             await self._repository.update_operation_status(
                 op.id, status="completed", completed=True
             )
@@ -151,14 +155,43 @@ class ScraperCoordinator:
         )
         sources_attempted_ids = [str(s.id) for s in prioritized]
 
-        operation = await self._repository.create_operation(
+        operation, is_idempotent_hit = await self._create_or_get_idempotent_operation(
             idempotency_key=idempotency_key,
             triggered_by=triggered_by,
             sources_attempted=sources_attempted_ids,
         )
+        if is_idempotent_hit:
+            return operation, True, len(operation.sources_attempted or []), 0
 
         TokenManager.create_operation_token(operation.id)
         return operation, False, len(sources_attempted_ids), skipped_locked_count
+
+    async def _create_or_get_idempotent_operation(
+        self,
+        idempotency_key: str | None,
+        triggered_by: str,
+        sources_attempted: list[str],
+    ) -> tuple[Any, bool]:
+        """Create the operation, or return the winner of a concurrent retry race."""
+        try:
+            operation = await self._repository.create_operation(
+                idempotency_key=idempotency_key,
+                triggered_by=triggered_by,
+                sources_attempted=sources_attempted,
+            )
+            return operation, False
+        except UniqueViolationError:
+            if idempotency_key is None:
+                raise
+            existing_op = await self._repository.get_operation_by_idempotency_key(
+                idempotency_key=idempotency_key, within_minutes=15
+            )
+            if existing_op is None:
+                raise
+            logger.info(
+                "Concurrent idempotency retry reused operation %s", existing_op.id
+            )
+            return existing_op, True
 
     # [OMA-W008-T002] Enforce 20-min hard ceiling (FR-010)
     async def run_scrape_operation(

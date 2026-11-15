@@ -6,8 +6,10 @@ and error handling.
 """
 
 import os
-import pytest
+
 import httpx
+import pytest
+
 from src.main import app
 from src.modules.core.database.prisma_client import connect, disconnect
 

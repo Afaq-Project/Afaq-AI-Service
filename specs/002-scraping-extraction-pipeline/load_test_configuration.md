@@ -48,6 +48,9 @@ Keep these unset in the generated k6 pass/fail thresholds until values are suppl
 - **Base URL:** `K6_BASE_URL` (required; no default production URL).
 - **API key:** `K6_API_KEY` (required; inject through environment variables, never store the secret here).
 - **Source IDs:** `K6_SOURCE_IDS` (test-environment UUIDs only; do not place production identifiers here).
+- **Fixture IDs:** `K6_LOCKED_SOURCE_ID`, `K6_INACTIVE_SOURCE_ID`, and `K6_KNOWN_OPERATION_ID` must identify seeded test records.
+- **Onboarding fixtures:** valid/irrelevant portal checks are `BLOCKED` unless `K6_ENABLE_ONBOARDING=true` and both `K6_TEST_VALID_PORTAL_URL` and `K6_TEST_IRRELEVANT_PORTAL_URL` point to operator-controlled fixtures.
+- **Omitted source IDs:** RUN-02 is disabled unless `K6_ENABLE_OMITTED_SOURCE_IDS=true`; enable it only with a dedicated database whose active sources are all test fixtures.
 - **TLS verification:** Enabled by default.
 - **Run labels:** `K6_ENVIRONMENT`, `K6_BUILD_ID`, and selected profile name.
 

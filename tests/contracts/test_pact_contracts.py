@@ -12,14 +12,14 @@ from src.api.dependencies import require_api_key
 from src.api.protocols import get_discovery_service, get_scraper_service
 from src.main import app
 from src.modules.core.auth.models import ApiKeyInfo
-from src.modules.security.models import ValidatedUrl
-from src.modules.security.services.link_validator_service import LinkValidatorService
 from src.modules.scraping.models import (
     OperationAbortData,
     SourceAbortData,
     SourceOnboardData,
     SourceOnboardResponse,
 )
+from src.modules.security.models import ValidatedUrl
+from src.modules.security.services.link_validator_service import LinkValidatorService
 
 PACT_FILE = (
     Path(__file__).parents[2]

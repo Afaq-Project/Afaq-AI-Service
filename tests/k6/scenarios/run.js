@@ -3,9 +3,19 @@
 
 import { check, group, sleep } from 'k6';
 import { httpPost, httpGet, safeJson, uuidv4 } from '../helpers.js';
-import { SOURCE_IDS, LOCKED_SOURCE_ID } from '../config.js';
+import {
+  ENABLE_OMITTED_SOURCE_IDS,
+  POLLING_INTERVAL_SEC,
+  SOURCE_IDS,
+  LOCKED_SOURCE_ID,
+} from '../config.js';
 
 export function runScrapeTriggerScenario() {
+  // Triggering starts background crawls and acquires locks. In the baseline
+  // profile, mutate fixtures only in the first VU iteration; later iterations
+  // continue exercising the read-only operation endpoints.
+  if (__ITER !== 0) return;
+
   group('API-02: Trigger Scraping & Concurrency Controls', function () {
     const validSourceId = SOURCE_IDS[0];
 
@@ -68,26 +78,8 @@ export function runScrapeTriggerScenario() {
       },
     });
 
-    // RUN-01 Telemetry Polling: Poll returned operation
-    if (initialOpId) {
-      let pollSucceeded = false;
-      for (let attempt = 0; attempt < 5; attempt++) {
-        sleep(0.5);
-        const resPoll = httpGet(`/api/v1/scrape/operations/${initialOpId}`);
-        if (resPoll.status === 200) {
-          const pollBody = safeJson(resPoll);
-          if (pollBody && pollBody.data && pollBody.data.operation_id === initialOpId) {
-            pollSucceeded = true;
-            break;
-          }
-        }
-      }
-      check(null, {
-        'RUN-01: Operation status polling returns 200 and matches operation_id': () => pollSucceeded,
-      });
-    }
-
-    // RUN-03: Repeated request with the SAME idempotency key within 15 mins
+    // RUN-03: immediately retry the same logical request while its operation
+    // is running (or has just completed).
     const resDuplicate = httpPost(
       '/api/v1/scrape/run',
       { source_ids: [validSourceId] },
@@ -99,28 +91,59 @@ export function runScrapeTriggerScenario() {
       'RUN-03: Repeated idempotency key returns 200 OK': (r) => r.status === 200,
       'RUN-03: Returned operation_id matches original': (r) => {
         const body = safeJson(r);
-        return body && body.operation_id === initialOpId;
+        return Boolean(body && body.operation_id === initialOpId);
       },
       'RUN-03: Response acknowledges existing operation': (r) => {
         const body = safeJson(r);
-        return body && body.status === 'accepted';
+        return Boolean(body && body.status === 'accepted');
       },
     });
 
-    // RUN-02: Trigger with omitted source_ids (all active sources)
-    const resOmitted = httpPost(
-      '/api/v1/scrape/run',
-      {},
-      undefined,
-      { headers: { 'Idempotency-Key': uuidv4() } }
-    );
+    // RUN-01 telemetry: the operation endpoint wraps its record in data.
+    if (initialOpId) {
+      let pollObserved = false;
+      let terminalStatus = false;
+      const terminalStatuses = new Set([
+        'completed',
+        'partial',
+        'failed',
+        'timed_out',
+        'aborted',
+      ]);
+      for (let attempt = 0; attempt < 5 && !terminalStatus; attempt++) {
+        sleep(POLLING_INTERVAL_SEC);
+        const resPoll = httpGet(`/api/v1/scrape/operations/${initialOpId}`);
+        if (resPoll.status === 200) {
+          const pollBody = safeJson(resPoll);
+          if (pollBody && pollBody.data && pollBody.data.operation_id === initialOpId) {
+            pollObserved = true;
+            terminalStatus = terminalStatuses.has(pollBody.data.status);
+          }
+        }
+      }
+      check(null, {
+        'RUN-01: Operation status polling returns matching operation_id': () => pollObserved,
+        'RUN-01: Controlled operation reaches a terminal state during polling': () => terminalStatus,
+      });
+    }
 
-    check(resOmitted, {
-      'RUN-02: Omitted source_ids returns 202 Accepted': (r) => r.status === 202,
-      'RUN-02: Omitted source_ids returns operation_id': (r) => {
-        const body = safeJson(r);
-        return body && !!body.operation_id;
-      },
-    });
+    // RUN-02 targets every active source. Run it only when the operator opts
+    // into a dedicated test database containing test sources exclusively.
+    if (ENABLE_OMITTED_SOURCE_IDS) {
+      const resOmitted = httpPost(
+        '/api/v1/scrape/run',
+        {},
+        undefined,
+        { headers: { 'Idempotency-Key': uuidv4() } }
+      );
+
+      check(resOmitted, {
+        'RUN-02: Omitted source_ids returns 202 Accepted': (r) => r.status === 202,
+        'RUN-02: Omitted source_ids returns operation_id': (r) => {
+          const body = safeJson(r);
+          return Boolean(body && body.operation_id);
+        },
+      });
+    }
   });
 }
