@@ -7,7 +7,7 @@ This document establishes the architectural principles, coding conventions, test
 ## 1. Operating Rules & Core Constraints
 
 * **Strict Communication & Code Language:**
-  * All communications, reasoning summaries, commit messages, PR descriptions, documentation, and code comments must be conducted **exclusively in English**.
+  * All communications, reasoning summaries, commit messages, PR descriptions, documentation, and code comments must be conducted **exclusively in English**, except when working in Nimbalyst: documentation and diagrams created or edited in Nimbalyst MUST be written in Arabic, while technical terms, identifiers, code, and API names remain in English.
 
 * **Concise & Direct Responses (Zero Filler):**
   * All responses and communications must be concise, direct, and clear.
@@ -349,6 +349,12 @@ Every functional commit touching application code, dependencies, or architectura
 ---
 
 ## 7. Documentation & Reporting Standards
+
+* **Per-Feature Implementation Decision Logs (Mandatory):**
+  * Every feature under active development MUST have a `قرارات التنفيذ/` section in its tracked Nimbalyst wiki area, containing a purpose/rules page and an implementation decision log.
+  * Agents performing implementation, testing, documentation, or related work MUST update the feature log as substantive technical or engineering decisions are made. Each entry MUST identify who made the decision, the date (`YYYY-MM-DD`), context, action taken, alternatives considered and rejected with reasons, and impact or follow-up.
+  * All content in these decision-log sections MUST be written in Arabic; keep technical terms, identifiers, code, file paths, and API names in English.
+  * These logs record implementation-stage actions and reasoning. They MUST NOT replace ADRs or duplicate high-level foundational architecture decisions, which belong in ADR files.
 
 * **Report Storage Location:**
   * All technical, audit, architecture, and engineering reports must be stored within the `docs/reports/` directory of the project.
