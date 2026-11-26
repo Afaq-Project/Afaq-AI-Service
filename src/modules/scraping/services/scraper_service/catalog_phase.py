@@ -94,11 +94,38 @@ async def crawl_catalog_phase(
     config: Any,
     operation_token: asyncio.Event | None,
     source_token: asyncio.Event | None,
+    template_engine: Any = None,
 ) -> int:
     """Crawls Level 1 catalog pages and persists discovered listings into raw_listings."""
     start_url = getattr(source, "url", "")
     if not start_url:
         return 0
+
+    nav = {}
+    if config is not None:
+        pc = getattr(config, "pagination_config", None)
+        if isinstance(pc, dict):
+            nav = pc.get("catalog_navigation", {}) or {}
+        if not isinstance(nav, dict):
+            nav = {}
+    if nav.get("type") == "url" and nav.get("href"):
+        try:
+            from src.modules.security.services.link_validator_service import (
+                LinkValidatorService,
+            )
+
+            resolved = urllib.parse.urljoin(start_url, str(nav["href"]).strip())
+            validated = await LinkValidatorService.validate_url(resolved, allow_redirects=True)
+            start_url = validated.canonical_url
+        except Exception as exc:
+            logger.warning("Catalog navigation validation failed: %s", exc)
+            return 0
+
+    if nav.get("type") == "tab":
+        selector = nav.get("selector")
+        if not isinstance(selector, str) or not selector.strip() or ";" in selector or "javascript:" in selector.lower():
+            logger.warning("Invalid catalog tab selector: %s", selector)
+            return 0
 
     max_pages = (
         getattr(config, "max_pages_per_run", 10)
@@ -140,29 +167,72 @@ async def crawl_catalog_phase(
             ),
         )
 
-        discovered_cards = extract_cards_from_html(crawl_res.html, current_url)
+        discovered_cards = None
+        matched_template = None
+        if template_engine is not None:
+            try:
+                layout_signature = f"{getattr(source, 'url', '')}_catalog"
+                matched_template = await template_engine.get_or_synthesize_template(
+                    source_id=source.id,
+                    level=1,
+                    html=crawl_res.html,
+                    layout_signature=layout_signature,
+                )
+                if matched_template is not None:
+                    res = template_engine.extract_with_template(crawl_res.html, matched_template)
+                    data = getattr(res, "data", None) or {}
+                    discovered_cards = data.get("cards") if isinstance(data, dict) else None
+            except Exception as exc:
+                logger.warning("Template extraction failed: %s", exc)
+        if not discovered_cards:
+            # No successful template extraction; do not mark as silent success
+            discovered_cards = []
 
         if discovered_cards:
-            batch_payload = [
-                {
-                    "operation_id": operation_id,
-                    "source_id": source.id,
-                    "discovered_url": card["url"],
-                    "listing_page_url": current_url,
-                    "card_title_preview": card.get("title"),
-                    "card_snippet_preview": card.get("snippet"),
-                    "card_image_url": card.get("image_url"),
-                    "page_number": page_num,
-                    "status": "pending_detail_crawl",
-                }
-                for card in discovered_cards
-            ]
+            batch_payload = []
+            for card in discovered_cards:
+                raw_link = card.get("discovered_url") or card.get("url")
+                if not raw_link:
+                    continue
+                resolved = urllib.parse.urljoin(current_url, str(raw_link).strip())
+                clean_url = urllib.parse.urldefrag(resolved).url
+                try:
+                    from src.modules.security.services.link_validator_service import (
+                        LinkValidatorService,
+                    )
+
+                    validated = await LinkValidatorService.validate_url(
+                        clean_url, allow_redirects=True
+                    )
+                    clean_url = validated.canonical_url
+                except Exception as exc:
+                    logger.warning("Card detail URL validation failed: %s", exc)
+                    continue
+                batch_payload.append(
+                    {
+                        "operation_id": operation_id,
+                        "source_id": source.id,
+                        "discovered_url": clean_url,
+                        "listing_page_url": current_url,
+                        "card_title_preview": (
+                            card.get("card_title_preview") or card.get("title")
+                        ),
+                        "card_snippet_preview": (
+                            card.get("card_snippet_preview") or card.get("snippet")
+                        ),
+                        "card_image_url": (
+                            card.get("card_image_url") or card.get("image_url")
+                        ),
+                        "page_number": page_num,
+                        "status": "pending_detail_crawl",
+                    }
+                )
             saved_count = await repository.create_listings_batch(
                 batch_payload, skip_duplicates=True
-            )
+            ) if batch_payload else 0
             total_discovered += saved_count
 
-        card_identifiers = [c.get("title") or c["url"] for c in discovered_cards]
+        card_identifiers = [c.get("card_title_preview") or c.get("title") or c.get("discovered_url") or c.get("url") for c in discovered_cards]
         step_result = pagination_service.evaluate_step(
             state=state,
             html=crawl_res.html,

@@ -18,6 +18,9 @@ from src.modules.scraping.services.language_classifier_service import (
     LanguageClassifierService,
 )
 from src.modules.scraping.services.pagination_service import PaginationService
+from src.modules.scraping.services.template_engine_service import (
+    TemplateEngineService,
+)
 from src.modules.scraping.services.prioritization_service import PrioritizationService
 
 from .catalog_phase import crawl_catalog_phase, extract_cards_from_html
@@ -54,6 +57,8 @@ class ScraperService:
         webhook_client: WebhookClient | None = None,
         language_classifier: LanguageClassifierService | None = None,
         document_ingestion: DocumentIngestionService | None = None,
+        template_engine: TemplateEngineService | None = None,
+        llm_client: Any = None,
         settings: Settings | None = None,
     ) -> None:
         if repository is None:
@@ -74,6 +79,9 @@ class ScraperService:
         self._webhook_client = webhook_client
         self._language_classifier = language_classifier or LanguageClassifierService()
         self._document_ingestion = document_ingestion
+        self._template_engine = template_engine or TemplateEngineService(
+            repository=self._repository, settings=self._settings, llm_client=llm_client
+        )
 
         self._coordinator = ScraperCoordinator(
             repository=self._repository,
@@ -83,6 +91,7 @@ class ScraperService:
             webhook_client=self._webhook_client,
             language_classifier=self._language_classifier,
             document_ingestion=self._document_ingestion,
+            template_engine=self._template_engine,
             settings=self._settings,
         )
 
@@ -136,6 +145,7 @@ class ScraperService:
             crawler_service=self._crawler_service,
             pagination_service=self._pagination_service,
             repository=self._repository,
+            template_engine=self._template_engine,
             operation_id=operation_id,
             source=source,
             config=config,
@@ -156,6 +166,7 @@ class ScraperService:
             language_classifier=self._language_classifier,
             document_ingestion=self._document_ingestion,
             repository=self._repository,
+            template_engine=self._template_engine,
             operation_id=operation_id,
             source=source,
             config=config,

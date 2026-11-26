@@ -3,7 +3,7 @@
 import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -22,6 +22,21 @@ from src.modules.scraping.services.prioritization_service import (
 )
 from src.modules.scraping.services.scraper_service import ScraperService
 from src.modules.scraping.services.scraper_service.token_manager import TokenManager
+
+
+
+@pytest.fixture(autouse=True)
+def _mock_link_validator():
+    async def _validate(url, allow_redirects=True):
+        m = MagicMock()
+        m.canonical_url = url
+        return m
+
+    with patch(
+        "src.modules.security.services.link_validator_service.LinkValidatorService.validate_url",
+        new=_validate,
+    ):
+        yield
 
 
 # [OMA-W005-T016] TEST-01: Full two-phase batch crawl (Phase 1 Catalog -> Phase 2 Details)
@@ -46,6 +61,31 @@ async def test_two_phase_batch_crawl_e2e(
             "pagination_type": "none",
             "rate_limit_delay_sec": 0.0,
             "incremental_cutoff_enabled": False,
+        },
+    )
+
+    await scraping_repo.create_template(
+        source_id=source.id,
+        level=1,
+        layout_signature="catalog",
+        template_schema={
+            "selectors": {
+                "card_container": "article.card",
+                "card_title": "h3",
+                "card_link": "a",
+            }
+        },
+    )
+    await scraping_repo.create_template(
+        source_id=source.id,
+        level=2,
+        layout_signature="detail",
+        template_schema={
+            "selectors": {
+                "title": "h1",
+                "content": "article.entry-content",
+                "application_link": "a.apply-btn",
+            }
         },
     )
 

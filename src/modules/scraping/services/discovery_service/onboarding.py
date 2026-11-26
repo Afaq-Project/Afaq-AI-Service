@@ -118,7 +118,12 @@ class DiscoveryService:
 
     # [OMA-W006-T005] Safe robots.txt retrieval with per-hop SSRF validation on redirects
     async def fetch_robots_txt(self, base_url: str) -> tuple[float, list[str]]:
-        """Fetches and parses robots.txt with per-hop SSRF validation on redirects."""
+        """Fetches and parses robots.txt with per-hop SSRF validation on redirects.
+
+        The HTTP request is issued against the already validated destination IP
+        (with a Host header preserving the original hostname) so DNS cannot be
+        re-resolved to a private address between validation and the request.
+        """
         delay = 1.0
         sitemaps: list[str] = []
         robots_url = urllib.parse.urljoin(base_url, "/robots.txt")
@@ -128,13 +133,37 @@ class DiscoveryService:
                 robots_url, allow_redirects=False
             )
             current_url = val_robots.canonical_url
+            current_host = val_robots.host
+            current_ip = val_robots.resolved_ip
+            current_scheme = val_robots.scheme
+            current_port = val_robots.port
             max_hops = 5
             visited = {current_url}
+
+            def _pinned_request_url(canonical: str, ip: str, port: int, scheme: str) -> str:
+                parsed = urllib.parse.urlsplit(canonical)
+                host_ip = ip
+                if ":" in host_ip and not host_ip.startswith("["):
+                    host_ip = f"[{host_ip}]"
+                default_port = (port == 443 and scheme == "https") or (
+                    port == 80 and scheme == "http"
+                )
+                netloc = host_ip if default_port else f"{host_ip}:{port}"
+                return urllib.parse.urlunsplit(
+                    (scheme, netloc, parsed.path or "/", parsed.query, parsed.fragment)
+                )
 
             async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
                 resp = None
                 for _ in range(max_hops + 1):
-                    resp = await client.get(current_url)
+                    request_url = _pinned_request_url(
+                        current_url, current_ip, current_port, current_scheme
+                    )
+                    resp = await client.get(
+                        request_url,
+                        headers={"Host": current_host},
+                        extensions={"sni_hostname": current_host},
+                    )
                     is_redirect = resp.status_code in (
                         301,
                         302,
@@ -159,6 +188,10 @@ class DiscoveryService:
                             next_url, allow_redirects=False
                         )
                         current_url = val_redirect.canonical_url
+                        current_host = val_redirect.host
+                        current_ip = val_redirect.resolved_ip
+                        current_scheme = val_redirect.scheme
+                        current_port = val_redirect.port
                         continue
                     break
 
@@ -251,7 +284,7 @@ class DiscoveryService:
 
         detail_url_candidate = discovery.representative_detail_url
         if (
-            discovery.is_catalog_page
+            discovery.page_role == "catalog"
             and not detail_url_candidate
             and discovery.card_container_selector
         ):
@@ -265,7 +298,7 @@ class DiscoveryService:
             except Exception:
                 pass
 
-        if discovery.is_catalog_page and detail_url_candidate:
+        if discovery.page_role == "catalog" and detail_url_candidate:
             representative_url = urllib.parse.urljoin(
                 canonical_url, detail_url_candidate.strip()
             )
@@ -303,7 +336,7 @@ class DiscoveryService:
                 logger.warning(
                     "2nd-hop detail crawl failed for %s: %s", representative_url, exc
                 )
-        elif not discovery.is_catalog_page:
+        elif discovery.page_role == "detail":
             try:
                 detail_prompt = self.package_untrusted_prompt(
                     skeleton_dom,
@@ -377,7 +410,10 @@ class DiscoveryService:
             "site_description": discovery.site_description,
             "supported_languages": languages,
             "pagination_type": discovery.pagination_type or "next_button",
-            "pagination_config": discovery.pagination_config or {},
+            "pagination_config": {
+                **(discovery.pagination_config or {}),
+                "catalog_navigation": discovery.catalog_navigation or {},
+            },
             "ordering_strategy": discovery.ordering_strategy
             or "chronological_descending",
             "rate_limit_delay_sec": rate_limit_delay_sec,
@@ -401,7 +437,7 @@ class DiscoveryService:
         detail_discovery: DetailTemplateDiscoveryOutput | None,
     ) -> None:
         if (
-            discovery.is_catalog_page
+            discovery.page_role == "catalog"
             and discovery.card_container_selector
             and discovery.card_title_selector
         ):
@@ -507,16 +543,14 @@ class DiscoveryService:
         if not discovery.is_opportunity_portal:
             await self._handle_irrelevant_source(canonical_url, discovery, domain)
 
-        # 8. Conditional 2nd-hop catalog crawl
-        (
-            detail_discovery,
-            has_multi_tab,
-            tab_container_selector,
-            has_multi_page,
-            subpage_pagination_selector,
-        ) = await self._synthesize_detail_template(
-            llm_client, discovery, homepage_html, skeleton_dom, canonical_url
-        )
+        # 8. Template synthesis is deferred to runtime phases. Onboarding only
+        #    records catalog navigation; it never analyzes a generic homepage as
+        #    a detail page and never creates Level 1/Level 2 scraper templates.
+        detail_discovery = None
+        has_multi_tab = False
+        tab_container_selector = None
+        has_multi_page = False
+        subpage_pagination_selector = None
 
         # 9. Persist Source & SourceConfig
         source, source_config = await self._persist_source_and_configs(
@@ -533,11 +567,9 @@ class DiscoveryService:
             subpage_pagination_selector,
         )
 
-        # 10. Persist Templates
+        # 10. Template creation is deferred to first real catalog/detail page via TemplateEngine.
+        # Onboarding only persists catalog navigation (no homepage template).
         effective_domain = discovery.domain or domain
-        await self._persist_templates(
-            source.id, effective_domain, discovery, detail_discovery
-        )
 
         # 11. Return SourceOnboardResponse
         languages = (

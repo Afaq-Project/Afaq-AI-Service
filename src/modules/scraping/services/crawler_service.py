@@ -265,6 +265,43 @@ class CrawlerService:
         except Exception as e:
             logger.warning("Failed to evaluate multi-tab unhiding script: %s", e)
 
+    @classmethod
+    async def navigate_to_catalog_entry(
+        cls, page: Page, navigation: dict | None, base_url: str
+    ) -> str:
+        """Navigate to the discovered catalog entry (URL or tab) safely.
+
+        Returns the resulting page HTML. Only CSS selectors validated by the caller
+        are activated; no JavaScript or LLM-provided instructions are executed.
+        """
+        navigation = navigation or {}
+        nav_type = navigation.get("type")
+        if nav_type == "url":
+            href = navigation.get("href")
+            if href:
+                target = urllib.parse.urljoin(base_url, str(href).strip())
+                from src.modules.security.services.link_validator_service import (
+                    LinkValidatorService,
+                )
+
+                validated = await LinkValidatorService.validate_url(
+                    target, allow_redirects=True
+                )
+                await page.goto(validated.canonical_url, wait_until="domcontentloaded")
+                return await page.content()
+        selector = navigation.get("selector")
+        if nav_type == "tab" and selector:
+            # Validate selector format: must be a CSS selector, not code
+            if not isinstance(selector, str) or ";" in selector or "javascript:" in selector.lower():
+                logger.warning("Invalid catalog selector: %s", selector)
+                return await page.content()
+            try:
+                await page.click(selector, timeout=5000)
+                await page.wait_for_load_state("domcontentloaded")
+            except Exception as exc:
+                logger.warning("Catalog tab activation failed for %s: %s", selector, exc)
+        return await page.content()
+
     # [OMA-W005-T013] DOM-level static unhiding helper using BeautifulSoup
     @classmethod
     def unhide_tabs_in_html(cls, html: str) -> str:

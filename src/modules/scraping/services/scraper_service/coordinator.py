@@ -35,6 +35,9 @@ from src.modules.scraping.services.language_classifier_service import (
     LanguageClassifierService,
 )
 from src.modules.scraping.services.pagination_service import PaginationService
+from src.modules.scraping.services.template_engine_service import (
+    TemplateEngineService,
+)
 from src.modules.scraping.services.prioritization_service import PrioritizationService
 
 from .catalog_phase import crawl_catalog_phase
@@ -59,6 +62,8 @@ class ScraperCoordinator:
         webhook_client: WebhookClient | None = None,
         language_classifier: LanguageClassifierService | None = None,
         document_ingestion: DocumentIngestionService | None = None,
+        template_engine: TemplateEngineService | None = None,
+        llm_client: Any = None,
         settings: Settings | None = None,
     ) -> None:
         self._repository = repository
@@ -69,6 +74,9 @@ class ScraperCoordinator:
         self._webhook_client = webhook_client
         self._language_classifier = language_classifier or LanguageClassifierService()
         self._document_ingestion = document_ingestion
+        self._template_engine = template_engine or TemplateEngineService(
+            repository=repository, settings=self._settings, llm_client=llm_client
+        )
 
     def _filter_eligible_sources(
         self, candidate_sources: list[Any], cutoff: datetime
@@ -275,6 +283,7 @@ class ScraperCoordinator:
             config=config_obj,
             operation_token=operation_token,
             source_token=source_token,
+            template_engine=self._template_engine,
         )
         if (operation_token and operation_token.is_set()) or source_token.is_set():
             raise asyncio.CancelledError("Crawl halted between phases")
@@ -289,6 +298,7 @@ class ScraperCoordinator:
             config=config_obj,
             operation_token=operation_token,
             source_token=source_token,
+            template_engine=self._template_engine,
         )
         return listings, details
 

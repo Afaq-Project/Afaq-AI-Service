@@ -107,6 +107,117 @@ class TemplateEngineService:
             llm_client=self._llm_client,
         )
 
+    async def get_or_synthesize_template(
+        self,
+        source_id: str,
+        level: int,
+        html: str,
+        layout_signature: str,
+        schema_candidate: dict[str, Any] | None = None,
+    ) -> ScrapingTemplate | None:
+        """Load templates for source/level, match deterministically, or synthesize
+        via LLM, validate, and persist. Returns None on failure.
+        """
+        templates = await self._repository.get_templates_for_source(source_id, level)
+        matched = self.match_template_deterministic(html, templates)
+        if matched is not None:
+            return matched
+
+        if schema_candidate is None and self._llm_client is not None:
+            schema_candidate = await self._synthesize_schema(level, html)
+
+        if not schema_candidate:
+            return None
+
+        from src.modules.security.services.schema_validator_service import (
+            SchemaValidatorService,
+        )
+
+        validation = await SchemaValidatorService.validate_template_schema(
+            schema_candidate, sample_html=html, raise_on_error=False
+        )
+        if not getattr(validation, "is_valid", False):
+            return None
+        try:
+            return await self._repository.create_template(
+                source_id=source_id,
+                level=level,
+                layout_signature=layout_signature,
+                template_schema=schema_candidate,
+                schema_type="CSS",
+            )
+        except Exception as exc:
+            logger.warning("Template persistence failed: %s", exc)
+            return None
+
+    async def _synthesize_schema(self, level: int, html: str) -> dict[str, Any] | None:
+        from pydantic import BaseModel, ConfigDict, Field
+
+        from src.modules.scraping.services.discovery_service.prompts import (
+            package_untrusted_prompt,
+        )
+        from src.modules.scraping.services.discovery_service.skeletonizer import (
+            skeletonize_dom,
+        )
+
+        class L1Out(BaseModel):
+            model_config = ConfigDict(extra="ignore")
+
+            card_container_selector: str
+            card_title_selector: str
+            card_link_selector: str
+
+        class L2Out(BaseModel):
+            model_config = ConfigDict(extra="ignore")
+
+            title_selector: str
+            content_selector: str
+            deadline_selector: str | None = None
+            application_link_selector: str | None = None
+
+        try:
+            from src.modules.scraping.services.discovery_service.onboarding import (
+                DiscoveryService,
+            )
+
+            skeleton = skeletonize_dom(html)
+            prompt = package_untrusted_prompt(
+                skeleton, user_instruction="Generate extraction selectors."
+            )
+            if level == 1:
+                completion = await self._llm_client.generate(
+                    system="Generate CSS selectors for catalog cards.",
+                    prompt=prompt,
+                    output_type=L1Out,
+                )
+                out = completion.output
+                return {
+                    "schema_name": "catalog_l1",
+                    "selectors": {
+                        "card_container": out.card_container_selector,
+                        "card_title": out.card_title_selector,
+                        "card_link": out.card_link_selector,
+                    },
+                }
+            completion = await self._llm_client.generate(
+                system="Generate CSS selectors for detail fields.",
+                prompt=prompt,
+                output_type=L2Out,
+            )
+            out = completion.output
+            selectors = {
+                "title": out.title_selector,
+                "content": out.content_selector,
+            }
+            if out.deadline_selector:
+                selectors["deadline_raw"] = out.deadline_selector
+            if out.application_link_selector:
+                selectors["application_link"] = out.application_link_selector
+            return {"schema_name": "detail_l2", "selectors": selectors}
+        except Exception as exc:
+            logger.warning("Schema synthesis failed: %s", exc)
+            return None
+
 
 __all__ = [
     "TemplateEngineService",

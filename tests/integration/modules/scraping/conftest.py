@@ -1,7 +1,7 @@
 # [OMA-W005-T016] [OMA-W005-T022] [OMA-W005-T034] [OMA-W006-T002] Integration test fixtures and configuration for scraping pipeline
 
 from collections.abc import AsyncGenerator
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient

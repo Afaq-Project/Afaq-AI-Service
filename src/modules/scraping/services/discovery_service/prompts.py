@@ -12,14 +12,16 @@ Your task is to analyze the skeletonized DOM and determine:
 3. domain: The primary domain name (e.g. 'daad.de').
 4. site_description: A concise 1-2 sentence description of the opportunities offered.
 5. supported_languages: List of ISO 639-1 language codes detected in the content (e.g. ['ar', 'en']).
-6. is_catalog_page: True if this page contains a list/catalog of multiple opportunity cards; False if it is a single opportunity detail page or generic non-catalog landing.
-7. representative_detail_url: If this is a catalog page, extract the relative or absolute URL to one representative opportunity detail page from the card listings.
-8. pagination_type: One of 'url_param', 'next_button', 'infinite_scroll', or 'none'.
-9. pagination_config: If 'url_param', include {'param': 'page', 'step': 1}. If 'next_button', include {'next_selector': 'css selector for next page button'}.
-10. ordering_strategy: One of 'chronological_descending', 'deadline_ascending', 'featured_sponsored_mixed', or 'unknown'.
+ 6. page_role: Explicit, non-defaulted page role. One of 'homepage' (generic landing/home page), 'catalog' (the entry URL is itself an opportunity listing/catalog), or 'detail' (a single opportunity detail page). A direct catalog URL must be 'catalog', not 'homepage'.
+ 7. is_catalog_page: True if this page contains a list/catalog of multiple opportunity cards; False if it is a single opportunity detail page or generic non-catalog landing.
+ 8. representative_detail_url: If this is a catalog page, extract the relative or absolute URL to one representative opportunity detail page from the card listings.
+ 9. pagination_type: One of 'url_param', 'next_button', 'infinite_scroll', or 'none'.
+10. pagination_config: If 'url_param', include {'param': 'page', 'step': 1}. If 'next_button', include {'next_selector': 'css selector for next page button'}.
+ 11. ordering_strategy: One of 'chronological_descending', 'deadline_ascending', 'featured_sponsored_mixed', or 'unknown'.
 11. card_container_selector: CSS selector identifying each individual opportunity card element (e.g. 'article.post', '.scholarship-card').
 12. card_title_selector: Relative CSS selector for the title within each card.
 13. card_link_selector: Relative CSS selector for the link to the detail page within each card.
+14. catalog_navigation: Object describing how to reach the opportunity catalog from this entry page. Use {"type": "url", "href": "<relative or absolute URL>"} for a link, or {"type": "tab", "selector": "<CSS selector for tab/button/panel>"} for an in-page tab. Do not create a homepage template.
 """
 
 DETAIL_TEMPLATE_SYSTEM_PROMPT = """You are an autonomous web scraper and educational opportunity detail template generator.

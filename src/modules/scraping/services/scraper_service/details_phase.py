@@ -183,6 +183,7 @@ async def crawl_details_phase(
     config: Any,
     operation_token: asyncio.Event | None,
     source_token: asyncio.Event | None,
+    template_engine: Any = None,
 ) -> int:
     """Crawls Level 2 detail pages for pending listings and stores raw_grant_details."""
     rate_limit_delay = (
@@ -255,13 +256,59 @@ async def crawl_details_phase(
                     root_listing_id=listing.id,
                 )
 
-                extracted_data = extract_details_from_html(
-                    crawl_res.html, listing.discovered_url
+                extracted_data = None
+                template_id = None
+                template_version = None
+                if template_engine is not None:
+                    try:
+                        matched = await template_engine.get_or_synthesize_template(
+                            source_id=source.id,
+                            level=2,
+                            html=crawl_res.html,
+                            layout_signature=f"{getattr(source, 'url', '')}_detail",
+                        )
+                        if matched is not None:
+                            res = template_engine.extract_with_template(
+                                crawl_res.html, matched
+                            )
+                            data = getattr(res, "data", None) or {}
+                            if isinstance(data, dict):
+                                extracted_data = data
+                                template_id = getattr(matched, "id", None)
+                                template_version = getattr(matched, "version", None)
+                    except Exception as exc:
+                        logger.warning("Template extraction failed, falling back: %s", exc)
+                if not extracted_data:
+                    extracted_data = extract_details_from_html(
+                        crawl_res.html, listing.discovered_url
+                    )
+
+                # Validate against extraction contract
+                from src.modules.scraping.extraction_contract import (
+                    RawOpportunityPayload,
                 )
+
+                extracted_data.setdefault("source_url", listing.discovered_url)
+                if "body" in extracted_data and "description" not in extracted_data:
+                    extracted_data["description"] = extracted_data.pop("body")
+                if "content" in extracted_data and "description" not in extracted_data:
+                    extracted_data["description"] = extracted_data.pop("content")
+                if "application_url" in extracted_data and "application_url_candidate" not in extracted_data:
+                    extracted_data["application_url_candidate"] = extracted_data.pop("application_url")
+                if "application_link" in extracted_data and "application_url_candidate" not in extracted_data:
+                    extracted_data["application_url_candidate"] = extracted_data.pop("application_link")
+                if "deadline" in extracted_data and "deadline_raw" not in extracted_data:
+                    extracted_data["deadline_raw"] = extracted_data.pop("deadline")
+                _image_url = extracted_data.get("image_url")
+                _alternate_links = extracted_data.get("alternate_links", []) or []
+
+                for _k in ("url", "image_url", "alternate_links", "body", "content", "application_url", "application_link", "field_results", "_field_results"):
+                    extracted_data.pop(_k, None)
+                RawOpportunityPayload.model_validate(extracted_data)
 
                 lang_res = language_classifier.classify_opportunity(
                     title=extracted_data.get("title"),
-                    description=extracted_data.get("body"),
+                    description=extracted_data.get("description"),
                 )
 
                 # [OMA-W007-T003]
@@ -271,13 +318,26 @@ async def crawl_details_phase(
                     source_url=listing.discovered_url,
                     _title=extracted_data.get("title", ""),
                     _detected_language=lang_res.overall_language,
-                    alternate_links=extracted_data.get("alternate_links", []),
+                    alternate_links=_alternate_links,
                 )
 
                 attachment_s3_key: str | None = None
                 attachment_metadata: dict[str, Any] | None = None
                 has_attachment = False
-                app_url = extracted_data.get("application_url")
+                app_url = extracted_data.get("application_url_candidate") or extracted_data.get("application_url")
+                validated_app_url = None
+                if app_url:
+                    try:
+                        from src.modules.security.services.link_validator_service import (
+                            LinkValidatorService,
+                        )
+
+                        val = await LinkValidatorService.validate_url(
+                            app_url, allow_redirects=True
+                        )
+                        validated_app_url = val.canonical_url
+                    except Exception:
+                        validated_app_url = None
                 if app_url and is_downloadable_document(app_url) and document_ingestion:
                     try:
                         doc_res = await document_ingestion.ingest_document(
@@ -300,13 +360,15 @@ async def crawl_details_phase(
                     source_id=source.id,
                     source_url=listing.discovered_url,
                     raw_payload=extracted_data,
+                    template_id=template_id,
+                    template_version=template_version if template_version is not None else 1,
                     listing_id=listing.id,
                     opportunity_group_id=group_id,
-                    image_url=extracted_data.get("image_url"),
+                    image_url=_image_url,
                     title_language=lang_res.title_language,
                     body_language=lang_res.body_language,
                     language_confidence=lang_res.overall_confidence,
-                    final_application_url=app_url,
+                    final_application_url=validated_app_url,
                     has_attachment=has_attachment,
                     attachment_s3_key=attachment_s3_key,
                     attachment_metadata=attachment_metadata,

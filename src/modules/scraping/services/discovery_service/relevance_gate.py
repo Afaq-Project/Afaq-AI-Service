@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from src.modules.scraping.exceptions import (
     ERR_NOT_OPPORTUNITY_PORTAL,
@@ -33,9 +33,26 @@ class PlatformDiscoveryOutput(BaseModel):
         default_factory=lambda: ["ar", "en"],
         description="List of ISO 639-1 language codes observed or supported, e.g. ['ar', 'en']",
     )
-    is_catalog_page: bool = Field(
-        default=True,
+    is_catalog_page: bool | None = Field(
+        default=None,
         description="True if the current page is a catalog or listing of opportunities; False if it is a single detail page or generic home",
+    )
+    page_role: str = Field(
+        ...,
+        validation_alias=AliasChoices(
+            "page_role",
+            "entry_page_type",
+            "page_type",
+            "entry_type",
+            "role",
+        ),
+        description=(
+            "Explicit, non-defaulted page role for Level 0 discovery: "
+            "'homepage' (generic landing/home page), 'catalog' (the entry URL is "
+            "itself an opportunity listing/catalog), or 'detail' (a single "
+            "opportunity detail page). A direct catalog URL must be 'catalog', "
+            "not 'homepage'."
+        ),
     )
     representative_detail_url: str | None = Field(
         default=None,
@@ -65,6 +82,64 @@ class PlatformDiscoveryOutput(BaseModel):
         default=None,
         description="CSS selector relative to card container for opportunity detail URL",
     )
+    catalog_navigation: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "How to reach the opportunity catalog from the entry page: "
+            "{'type': 'url'|'tab', 'href': str|None, 'selector': str|None}. "
+            "Analyzed once during onboarding; no homepage template is created."
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_page_role(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        role = None
+        for key in ("page_role", "entry_page_type", "page_type", "entry_type", "role"):
+            value = data.get(key)
+            if value is not None:
+                role = value
+                break
+        if role is None:
+            is_catalog = data.get("is_catalog_page")
+            if is_catalog is True:
+                role = "catalog"
+            else:
+                # is_catalog_page=False cannot distinguish a homepage from a
+                # detail page; require an explicit page_role instead of guessing.
+                raise ValueError("page_role is required for Level 0 discovery")
+        if role is None:
+            raise ValueError("page_role is required for Level 0 discovery")
+        data = dict(data)
+        data["page_role"] = role
+        return data
+
+    @model_validator(mode="after")
+    def _normalize_page_role(self) -> "PlatformDiscoveryOutput":
+        role = str(self.page_role).strip().lower()
+        aliases = {
+            "home": "homepage",
+            "home_page": "homepage",
+            "landing": "homepage",
+            "generic_home": "homepage",
+            "direct_catalog": "catalog",
+            "listing": "catalog",
+            "catalog_page": "catalog",
+            "list": "catalog",
+            "detail_page": "detail",
+            "opportunity_detail": "detail",
+            "single_detail": "detail",
+        }
+        role = aliases.get(role, role)
+        if role not in {"homepage", "catalog", "detail"}:
+            raise ValueError(
+                f"page_role must be one of homepage, catalog, detail; got {role!r}"
+            )
+        self.page_role = role
+        self.is_catalog_page = role == "catalog"
+        return self
 
 
 class DetailTemplateDiscoveryOutput(BaseModel):

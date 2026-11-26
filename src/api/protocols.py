@@ -187,8 +187,15 @@ def get_scraper_service(
                 client = get_webhook_client()
             except Exception:
                 client = WebhookClient(webhook_url="")
+        try:
+            from src.modules.infrastructure.llm.providers import get_structured_client
+
+            _llm_client = get_structured_client()
+        except Exception:
+            _llm_client = None
         _singleton_scraper_service = ScraperService(
             webhook_client=client,
+            llm_client=_llm_client,
         )
     elif not getattr(_singleton_scraper_service._repository._db, "is_connected", lambda: False)():
         try:
@@ -246,7 +253,18 @@ def get_template_engine_service(
     settings: Annotated[Settings | None, Depends(get_settings)] = None,
 ) -> TemplateEngineService:
     """Dependency providing TemplateEngineService instance."""
-    return TemplateEngineService(settings=settings)
+    try:
+        from src.modules.core.database.repositories.scraping_repository import (
+            ScrapingRepository,
+        )
+        from src.modules.infrastructure.llm.providers import get_structured_client
+
+        _repo = ScrapingRepository()
+        _llm = get_structured_client()
+    except Exception:
+        _repo = None
+        _llm = None
+    return TemplateEngineService(repository=_repo, settings=settings, llm_client=_llm)
 
 
 __all__ = [
